@@ -17,6 +17,12 @@ const Store = {
 
   /* ----- Ажилтан ----- */
   async staffList() { return STAFF.concat(await DB.meta("staffExtra", [])); },
+  /* ----- Машин: үндсэн жагсаалт + "Цаашид хадгалах" гэж нэмсэн ----- */
+  async carList() { return CARS.concat(await DB.meta("carsExtra", [])); },
+  async addCar(name) {
+    const ex = await DB.meta("carsExtra", []);
+    if (!CARS.includes(name) && !ex.includes(name)) { ex.push(name); await DB.setMeta("carsExtra", ex); }
+  },
   async addStaff(name, pos) {
     const ex = await DB.meta("staffExtra", []);
     if (!ex.some(s => s[0] === name)) { ex.push([name, pos]); await DB.setMeta("staffExtra", ex); }
@@ -86,8 +92,13 @@ const Store = {
   isComplete(o) { return !!(o.sp && o.n > 0 && asList(o.arga).length && asList(o.beh).length && o.res); },
   async saveObs(o) {
     o.done = this.isComplete(o); o.newSp = isNewSp(o); o.updated = Date.now();
+    // Нислэгийн зам өөрчлөгдвөл KMZ-ийг дахин илгээнэ
+    const sig = JSON.stringify([o.pts, o.sp, o.n]);
+    if (sig !== o.pathSig) { o.pathSig = sig; o.pathUrl = ""; }
+    else if (!o.pathUrl) o.pathUrl = (await DB.get("obs", o.id))?.pathUrl || ""; // маягт нээлттэй байхад илгээгдсэн бол
     await DB.put("obs", o);
     for (const b of o.photos) await this.queue({ op: "file", id: b });
+    if (o.pts.length && !o.pathUrl) await this.queue({ op: "path", id: o.id });
     await this.queue({ op: "upsert", table: "obs", id: o.id });
     await this.bumpUsage(o.sp);
     return o;
@@ -156,7 +167,7 @@ const Rows = {
       "Ажигласан": o.observer, "Хамт ажилласан": (o.coworkers || []).join(", "), "Үзлэгийн төрөл": kindName(o), "Маршрут": routeName(o.route), "Юу хийсэн": listTxt(o.arga), "Ангилал": o.type,
       "Зүйл": o.sp, "Латин нэр": latinOf(o.sp), "Шинэ зүйл": isNewSp(o) ? "Тийм" : "",
       "Эрсдэл": RISK_LABEL[riskOf(o.sp)], "Тоо": +o.n || 0, "Зан төрх": listTxt(o.beh),
-      "Нислэгийн зам (тор)": o.pts.map(p => Geo.cell(p)).join(" → "), "Байршил": o.loc,
+      "Нислэгийн зам (тор)": o.pts.map(p => Geo.cell(p)).join(" → "), "Нислэгийн зам (KMZ)": o.pathUrl || "", "Байршил": o.loc,
       "Өргөрөг": o.lat ?? "", "Уртраг": o.lon ?? "", "Багаж": o.tools.join(", "),
       "Ангийн бууны сум": +o.ammoGun || 0, "Дохионы бууны сум": +o.ammoSig || 0, "Авсан арга хэмжээ": o.acts.join(", "),
       "Үр дүн": o.res, "Тэмдэглэл": o.note, "Зураг": photos.join(" "), "Зургийн тайлбар": captionTxt(o), "Төлөв": o.done ? "Бүрэн" : "Дутуу"
@@ -184,6 +195,19 @@ function trackKml(i) {
   const coords = i.track.map(p => `${p[1]},${p[0]},0`).join(" ");
   return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(routeName(i.route))} ${fmtDT(i.start)} ${esc(i.staff)}</name><Style id="r"><LineStyle><color>ff2e32b8</color><width>4</width></LineStyle></Style><Placemark><name>${esc(routeName(i.route))} · ${i.km} км</name><styleUrl>#r</styleUrl><LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString></Placemark></Document></kml>`;
 }
+
+/* Шувууны нислэгийн зам: ажиглалт бүр нэг шугам, эрсдэлийн түвшнээр өнгөтэй (KML өнгө aabbggrr) */
+function birdKml(obs, title) {
+  const col = { 3: "ff3f32b8", 2: "ff0a8fd6", 1: "ffa65a2a", 0: "ff94877d" };
+  const pm = o => {
+    const ll = o.pts.map(p => Geo.pxToLL(p)), c = ll.map(([la, lo]) => `${lo.toFixed(6)},${la.toFixed(6)},0`).join(" ");
+    const d = [`${o.n} бодгаль`, fmtDT(o.t), people(o).join(", "), listTxt(o.arga), listTxt(o.beh), o.pts.map(p => Geo.cell(p)).join(" → "), o.res].filter(Boolean).map(esc).join("<br>");
+    const geo = ll.length > 1 ? `<LineString><tessellate>1</tessellate><coordinates>${c}</coordinates></LineString>` : `<Point><coordinates>${c}</coordinates></Point>`;
+    return `<Placemark><name>${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}</name><description><![CDATA[${d}]]></description><styleUrl>#r${riskOf(o.sp)}</styleUrl>${geo}</Placemark>`;
+  };
+  return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(title)}</name>${Object.entries(col).map(([k, v]) => `<Style id="r${k}"><LineStyle><color>${v}</color><width>4</width></LineStyle><IconStyle><color>${v}</color></IconStyle></Style>`).join("")}${obs.filter(o => o.pts.length).map(pm).join("")}</Document></kml>`;
+}
+const birdKmz = (obs, title) => Zip.build([{ name: "doc.kml", data: birdKml(obs, title) }]);
 
 /* ---------- Google Apps Script руу илгээх ---------- */
 const Sync = {
@@ -224,6 +248,13 @@ const Sync = {
       const i = await DB.get("insps", it.ref); if (!i) return;
       const j = await this.post({ op: "file", folder: "GPS зам", name: `${i.route}_${isoDay(i.start)}_${fmtTime(i.start).replace(":", "")}_${i.id}.kml`, mime: "application/vnd.google-earth.kml+xml", text: trackKml(i) });
       i.trackUrl = j.url; await DB.put("insps", i); return;
+    }
+    if (it.op === "path") {
+      const o = await DB.get("obs", it.ref); if (!o || !o.pts.length || o.pathUrl) return;
+      const name = `${isoDay(o.t)}_${fmtTime(o.t).replace(":", "")}_${(o.sp || "todorhoigui").replace(/\s+/g, "_")}_${o.id}.kmz`;
+      const j = await this.post({ op: "file", folder: "Шувууны нислэгийн зам", name, mime: "application/vnd.google-earth.kmz", data: await blobToB64(await birdKmz([o], `${o.sp} ${fmtDT(o.t)}`)) });
+      const cur = await DB.get("obs", o.id); if (cur) { cur.pathUrl = j.url; await DB.put("obs", cur); }
+      return;
     }
     if (it.op === "upsert") {
       const store = it.table === "handover" ? "shifts" : it.table;

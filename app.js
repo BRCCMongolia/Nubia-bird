@@ -147,6 +147,7 @@ function bindStaffPicker(box, st, onChange) {
   });
   $$("[data-co]", box).forEach(c => c.hidden = c.dataset.co === st.staff);
 }
+const KEEP_CAR = "Цаашид жагсаалтад хадгалах";
 const lenChips = v => chips("len", SHIFT_LEN.map(String), String(v), { fill: true, own: true, ownType: "number", ownSuffix: " цаг", ownLabel: "Бичих…", labels: SHIFT_LEN.map(n => n + " цаг") });
 
 /* ---------- Дэлгэцүүд ---------- */
@@ -228,12 +229,12 @@ function inspItem(x, allObs, long) {
 Views.shiftStart = async () => {
   if (Store.shift) { setTimeout(() => App.go("home", {}, { reset: true })); return { title: "", html: "" }; }
   const staff = await Store.staffList();
-  const st = { staff: null, pos: "", coworkers: [], len: 24, car: CARS[0] };
+  const st = { staff: null, pos: "", coworkers: [], len: 24, car: CARS[0] }, cars = await Store.carList();
   return {
     title: "Ээлж эхлүүлэх", tab: "home",
     html: `<div class="card"><p class="h">1. Ажилтан</p><div id="sp">${staffPicker(staff, st)}</div></div>
       <div class="card"><p class="h">2. Ээлжийн хугацаа</p>${lenChips(24)}</div>
-      <div class="card"><p class="h">3. Машин</p>${chips("car", CARS, CARS[0], { fill: true })}</div>
+      <div class="card"><p class="h">3. Машин</p>${chips("car", cars, CARS[0], { fill: true, own: true, ownKeep: KEEP_CAR })}</div>
       <div class="card"><p class="h">4. Хүлээн авсан сум (заавал биш)</p><div class="row">
         <div class="field grow"><span class="label">Дохионы бууны сум</span><input type="number" inputmode="numeric" id="sig" placeholder="Тоо"></div>
         <div class="field grow"><span class="label">Ангийн бууны сум</span><input type="number" inputmode="numeric" id="gun" placeholder="Тоо"></div></div>
@@ -241,7 +242,7 @@ Views.shiftStart = async () => {
       <button class="btn p xl" id="go" disabled>Ээлж эхлүүлэх</button>`,
     mount(m) {
       bindStaffPicker($("#sp", m), st, () => $("#go", m).disabled = !st.staff);
-      bindChips(m, (k, v) => { if (k === "len") st.len = +v; if (k === "car") st.car = v; });
+      bindChips(m, (k, v, b) => { if (k === "len") st.len = +v; if (k === "car") { st.car = v; if (b?.dataset.keep) Store.addCar(v); } });
       $("#go", m).onclick = async () => {
         if (Store.shift) { toast("Ээлж аль хэдийн эхэлсэн байна"); return; }
         if (!(st.len > 0)) { toast("Ээлжийн хугацааг сонгоно уу"); return; }
@@ -590,7 +591,7 @@ Views.handover = async () => {
         <div class="small">${expected != null ? `Дохионы: авсан ${s.sigAmmoStart || 0}${sigIn ? ` + дундуур ${sigIn}` : ""} − зарцуулсан ${used} = ${expected}` : `Дохионы сум зарцуулсан: ${used}`} · ${gunExp != null ? `Ангийн: авсан ${s.gunAmmoStart || 0}${gunIn ? ` + дундуур ${gunIn}` : ""} − зарцуулсан ${gunUsed} = ${gunExp}` : `Ангийн сум зарцуулсан: ${gunUsed}`}</div>
         ${s.supplies?.length ? `<div class="small">Ээлжийн дунд авсан: ${esc(supplyTxt(s))}</div>` : ""}
         <div id="ammoWarn"></div></div>
-      <div class="card"><p class="h">3. Машин</p>${chips("car", CARS, s.car, { fill: true })}
+      <div class="card"><p class="h">3. Машин</p>${chips("car", await Store.carList(), s.car, { fill: true, own: true, ownKeep: KEEP_CAR })}
         <div class="field"><span class="label">Гүйлт (км)</span><input type="number" inputmode="numeric" id="km" placeholder="Одометрийн заалт"></div>
         <div class="field"><span class="label">Түлш</span>${chips("fuel", FUEL, "")}</div>
         ${CAR_CHECKS.map((c, k) => `<div class="field"><span class="label">${esc(c)}</span>${chips("chk" + k, ["Ажилладаг", "Гэмтэлтэй"], "Ажилладаг", { fill: true })}<input type="text" data-chkn="${k}" placeholder="Тайлбар: юу гэмтсэн" hidden></div>`).join("")}
@@ -621,8 +622,8 @@ Views.handover = async () => {
         $(`[data-eqs="${k}"]`, m).textContent = x.checked ? "Бий" : "Байхгүй"; $(`[data-eqs="${k}"]`, m).classList.toggle("r3", !x.checked);
         const nt = $(`[data-eqn="${k}"]`, m); nt.hidden = x.checked; if (!x.checked) nt.focus();
       });
-      bindChips(m, (k, v) => {
-        if (k === "car") h.car.name = v; if (k === "fuel") h.car.fuel = v; if (k === "clean") h.car.clean = v; if (k === "len") h.len = +v;
+      bindChips(m, (k, v, b) => {
+        if (k === "car") { h.car.name = v; if (b?.dataset.keep) Store.addCar(v); } if (k === "fuel") h.car.fuel = v; if (k === "clean") h.car.clean = v; if (k === "len") h.len = +v;
         if (k.startsWith("chk")) { h.car.checks[CAR_CHECKS[+k.slice(3)]] = v; const nt = $(`[data-chkn="${k.slice(3)}"]`, m); nt.hidden = v !== "Гэмтэлтэй"; if (!nt.hidden) nt.focus(); }
       });
       bindStaffPicker($("#recv", m), rcv);

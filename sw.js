@@ -1,5 +1,5 @@
 // Nubia Bird: офлайн ажиллуулах service worker. Шинэ хувилбар гаргахад VERSION-ийг өөрчилнө.
-const VERSION = "nubia-1.2.2";
+const VERSION = "nubia-1.3.0";
 const SHELL = ["./", "index.html", "styles.css", "manifest.webmanifest",
   "species.js", "data.js", "core.js", "store.js", "map.js", "ui.js", "export.js", "app.js",
   "lib/leaflet.js", "lib/leaflet.css",

@@ -8,12 +8,12 @@ function toast(msg, ms = 2400) {
 
 /* Сонголтын товчнууд. multi бол массив буцаана. own=true бол "Өөрөө бичих…" нэмнэ.
    search=true бол дээр нь хайх талбар гарна. ownType="number", ownSuffix=" цаг" бол тоо бичүүлнэ. */
-function chips(name, opts, val, { multi = false, fill = false, own = false, labels = null, limit = 0, search = false, ownType = "", ownSuffix = "", ownLabel = "Өөрөө бичих…" } = {}) {
+function chips(name, opts, val, { multi = false, fill = false, own = false, labels = null, limit = 0, search = false, ownType = "", ownSuffix = "", ownLabel = "Өөрөө бичих…", ownKeep = "" } = {}) {
   const sel = v => multi ? (val || []).includes(v) : val === v;
   const customs = multi ? (val || []).filter(v => !opts.includes(v)) : (val && !opts.includes(val) ? [val] : []);
   const all = opts.concat(customs), cut = limit && all.length > limit + 2 && !all.slice(limit).some(sel);
   const lab = (v, i) => labels && labels[i] ? labels[i] : esc(v) + (i >= opts.length && ownSuffix ? esc(ownSuffix) : "");
-  const html = `<div class="chips${fill ? " fill" : ""}" data-chips="${name}" data-multi="${multi ? 1 : ""}"${ownType ? ` data-own-type="${ownType}"` : ""}${ownSuffix ? ` data-own-suffix="${esc(ownSuffix)}"` : ""}>${all.map((v, i) => `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${sel(v)}"${cut && i >= limit ? " hidden" : ""}>${lab(v, i)}</button>`).join("")}${cut ? `<button type="button" class="chip own" data-more="1">Бусад ${all.length - limit}…</button>` : ""}${own ? `<button type="button" class="chip own" data-own="1">${esc(ownLabel)}</button>` : ""}</div>`;
+  const html = `<div class="chips${fill ? " fill" : ""}" data-chips="${name}" data-multi="${multi ? 1 : ""}"${ownType ? ` data-own-type="${ownType}"` : ""}${ownSuffix ? ` data-own-suffix="${esc(ownSuffix)}"` : ""}${ownKeep ? ` data-own-keep="${esc(ownKeep)}"` : ""}>${all.map((v, i) => `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${sel(v)}"${cut && i >= limit ? " hidden" : ""}>${lab(v, i)}</button>`).join("")}${cut ? `<button type="button" class="chip own" data-more="1">Бусад ${all.length - limit}…</button>` : ""}${own ? `<button type="button" class="chip own" data-own="1">${esc(ownLabel)}</button>` : ""}</div>`;
   return search ? `<div class="chipfind"><input type="search" class="chipq" placeholder="Хайх…" autocomplete="off" aria-label="Хайх">${html}<div class="small nomatch" hidden>Олдсонгүй. «Өөрөө бичих» дарж нэмнэ.</div></div>` : html;
 }
 /* Бүх chips бүлгийг холбоно: onPick(name, value) */
@@ -24,9 +24,10 @@ function bindChips(root, onPick) {
     if (b.dataset.more) { $$(".chip[hidden]", g).forEach(c => c.hidden = false); b.remove(); return; }
     if (b.dataset.own) {
       const q = g.parentElement.querySelector(".chipq");
-      const v = await promptText("Өөрөө бичих", q ? q.value.trim() : "", { type: g.dataset.ownType || "text" }); if (!v) return;
+      const v = await promptText("Өөрөө бичих", q ? q.value.trim() : "", { type: g.dataset.ownType || "text", check: g.dataset.ownKeep || "" }); if (!v) return;
       if (q) { q.value = ""; q.dispatchEvent(new Event("input")); }
       const nb = document.createElement("button"); nb.type = "button"; nb.className = "chip"; nb.dataset.v = v; nb.textContent = v + (g.dataset.ownSuffix || "");
+      if (promptText.checked) nb.dataset.keep = "1"; // "Цаашид жагсаалтад хадгалах" сонгосон
       g.insertBefore(nb, b); nb.click(); return;
     }
     if (multi) b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") !== "true");
@@ -63,13 +64,15 @@ function confirmBox(msg, { ok = "Тийм", cancel = "Үгүй", danger = false,
     scrim.addEventListener("click", e => { const b = e.target.closest("[data-r]"); if (!b && e.target !== scrim) return; scrim.remove(); res(b ? b.dataset.r === "yes" ? true : b.dataset.r === "alt" ? "alt" : false : false); });
   });
 }
-function promptText(title, val = "", { placeholder = "", type = "text" } = {}) {
+/* check өгвөл доор нь сонголт гарна; сонгосон эсэх нь promptText.checked-д үлдэнэ */
+function promptText(title, val = "", { placeholder = "", type = "text", check = "" } = {}) {
+  promptText.checked = false;
   return new Promise(res => {
     const scrim = document.createElement("div"); scrim.className = "scrim center";
-    scrim.innerHTML = `<form class="dialog"><div style="font-weight:650;font-size:17px">${esc(title)}</div><input type="${type}" value="${esc(val)}" placeholder="${esc(placeholder)}" autocomplete="off"${type === "number" ? ' inputmode="decimal" min="1"' : ""}><div class="row"><button type="button" class="btn" data-r="no">Болих</button><button class="btn p">Болсон</button></div></form>`;
+    scrim.innerHTML = `<form class="dialog"><div style="font-weight:650;font-size:17px">${esc(title)}</div><input type="${type}" value="${esc(val)}" placeholder="${esc(placeholder)}" autocomplete="off"${type === "number" ? ' inputmode="decimal" min="1"' : ""}>${check ? `<label class="check"><span>${esc(check)}</span><input type="checkbox" class="toggle" name="keep"></label>` : ""}<div class="row"><button type="button" class="btn" data-r="no">Болих</button><button class="btn p">Болсон</button></div></form>`;
     document.body.appendChild(scrim);
     const inp = $("input", scrim); setTimeout(() => inp.focus(), 50);
-    $("form", scrim).onsubmit = e => { e.preventDefault(); scrim.remove(); res(inp.value.trim()); };
+    $("form", scrim).onsubmit = e => { e.preventDefault(); promptText.checked = !!$("[name=keep]", scrim)?.checked; scrim.remove(); res(inp.value.trim()); };
     $("[data-r=no]", scrim).onclick = () => { scrim.remove(); res(""); };
   });
 }

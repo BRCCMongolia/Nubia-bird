@@ -94,6 +94,7 @@ const Export = {
       const b = id && await DB.get("blobs", id); if (b) files.push({ name: `huleelceh/${n}.${b.type.includes("png") ? "png" : "jpg"}`, data: b.blob });
     }
     for (const i of insps) if (i.track.length > 1) files.push({ name: `gps/${i.route}_${fmtTime(i.start).replace(":", "")}.kml`, data: trackKml(i) });
+    if (obs.some(o => o.pts.length)) files.push({ name: "shuvuunii_zam.kmz", data: await birdKmz(obs, `Шувууны нислэгийн зам ${fmtDate(s.start)} ${s.staff}`) });
     const R = await Report.compute(s.start, (s.end || Date.now()) + 1, null);
     R.shifts = [s]; R.insps = insps; R.obs = obs;
     const html = this.shiftHtml(s, R);
