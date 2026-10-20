@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Nubia Bird</title>
+<meta name="description" content="Чингис хаан ОУНБ-ын шувууны үзлэг шалгалт, бүртгэлийн апп">
+<meta name="theme-color" content="#eef0eb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11151a" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Nubia Bird">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-180.png">
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="splash" aria-hidden="true">
+  <div>
+    <div class="logos"><img src="img/nubia.png" alt="Nubia"><img src="img/brcc.jpg" alt="BRCC"></div>
+    <div class="nm">Nubia Bird</div>
+    <div class="ap">Чингис хаан олон улсын нисэх буудал</div>
+    <div class="ab">Nubia Bird апп нь Чингис хаан олон улсын нисэх буудлын шувуу, амьтны үзлэг, үргээлтийн бүртгэл хөтлөхөд зориулж бүтээсэн. Аппыг өөр нисэх буудалд ашиглах, зөвшөөрөлгүй хувилах, тараах, бусад зорилгоор ашиглахыг хориглоно.</div>
+    <div class="cp">Зохиогчийн эрх: © Биологийн Нөөцийг Хамгаалах Төв, 2026</div>
+  </div>
+</div>
+<div id="app">
+  <header class="top">
+    <button type="button" class="back" aria-label="Буцах" hidden>‹</button>
+    <img class="logo" src="img/nubia.png" alt="">
+    <h1>Nubia Bird</h1>
+    <button type="button" class="sync" aria-label="Илгээлтийн төлөв"><i></i><span></span></button>
+  </header>
+  <main></main>
+</div>
+<nav class="nav" aria-label="Үндсэн цэс"><div>
+  <button type="button" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>Нүүр</button>
+  <button type="button" data-tab="report"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>Тайлан</button>
+  <button type="button" data-tab="ref"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h13v16H6a2 2 0 00-2 2z"/><path d="M4 21V5M8 7h7"/></svg>Лавлах</button>
+</div></nav>
+<script src="lib/leaflet.js"></script>
+<script src="species.js"></script>
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="store.js"></script>
+<script src="map.js"></script>
+<script src="ui.js"></script>
+<script src="export.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
