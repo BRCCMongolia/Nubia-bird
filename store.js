@@ -7,6 +7,7 @@ const Store = {
 
   async load() {
     this.settings = Object.assign(this.settings, await DB.meta("settings", {}));
+    if (!this.settings.url) this.settings.url = SHEET_URL;
     const sid = await DB.meta("currentShift", null);
     this.shift = sid ? await DB.get("shifts", sid) : null;
     const iid = await DB.meta("currentInsp", null);
