@@ -46,7 +46,14 @@ addEventListener("online", updateSync); addEventListener("offline", updateSync);
 const shiftEnd = s => s.start + s.len * 3600000;
 const shiftLine = s => `${esc(s.staff)} · ${fmtDT(s.start)} – ${fmtDT(s.end || shiftEnd(s))} (${s.len} цаг)`;
 const coLine = x => x.coworkers?.length ? `Хамт: ${x.coworkers.map(esc).join(", ")}` : "";
-const countLine = (insps, obs) => [insps != null ? `Үзлэг ${insps}` : "", `Ажиглалт ${obs.length}`, `Үргээлэг ${obs.filter(o => hasArga(o, "Үргээлэг")).length}`].filter(Boolean).join(" · ");
+// Картын тоо: 1-р мөр үргэлж, 2-р мөрөнд зөвхөн тэгээс их нь. insps = null бол үзлэгийг харуулахгүй.
+const countLine = (insps, obs) => {
+  const sp = new Set(obs.filter(o => o.sp).map(o => o.sp));
+  const l1 = [`Зүйл ${sp.size}`, `Бодгаль ${sum(obs, o => +o.n || 0)}`, `Үргээлэг ${obs.filter(o => hasArga(o, "Үргээлэг")).length}`, `Устгал ${sum(obs.filter(o => hasArga(o, "Устгал")), o => +o.n || 0)}`];
+  const l2 = [[insps, "Үзлэг"], [[...sp].filter(n => riskOf(n) === 3).length, "III түвшний"], [sum(obs, o => +o.ammoGun || 0), "Ангийн сум"], [sum(obs, o => +o.ammoSig || 0), "Дохионы сум"]]
+    .filter(([n]) => n > 0).map(([n, t]) => `${t} ${n}`);
+  return l1.join(" · ") + (l2.length ? `</span><span class="s">${l2.join(" · ")}` : "");
+};
 const riskBadge = sp => { const r = riskOf(sp); return r ? `<span class="badge r${r}">${RISK_LABEL[r]}</span>` : ""; };
 const obsItem = o => `<button type="button" class="item" data-obs="${o.id}">
   <span class="t ${riskOf(o.sp) === 3 ? "r3" : ""}">${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}${o.newSp ? ` <span class="badge new">Шинэ</span>` : ""}</span>
@@ -213,7 +220,8 @@ function inspItem(x, allObs, long) {
   const o = allObs.filter(b => b.inspId === x.id);
   return `<button class="item card2" data-insp="${x.id}"><span class="t">${long ? esc(x.staff) + " · " + fmtDate(x.start) + " " : ""}${esc(routeName(x.route))} · ${fmtTime(x.start)}–${x.end ? fmtTime(x.end) : "одоо"}</span>
     ${long && x.coworkers?.length ? `<span class="s">${coLine(x)}</span>` : ""}
-    <span class="s">${x.noBird ? "Шувуугүй" : countLine(null, o)}${x.km ? " · " + x.km + " км" : ""}${x.routeNote ? " · " + esc(x.routeNote) : ""}</span></button>`;
+    ${x.km || x.routeNote ? `<span class="s">${[x.km ? x.km + " км" : "", esc(x.routeNote || "")].filter(Boolean).join(" · ")}</span>` : ""}
+    <span class="s">${x.noBird ? "Шувуугүй" : countLine(null, o)}</span></button>`;
 }
 
 /* Ээлж эхлүүлэх (анх удаа, эсвэл хүлээлцэлгүйгээр) */
