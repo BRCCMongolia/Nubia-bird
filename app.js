@@ -182,7 +182,7 @@ Views.home = async () => {
       ${sI.length ? fold("cur-insps", "Энэ ээлжийн үзлэг", `<div class="list">${sI.map(x => inspItem(x, allObs)).join("")}</div>`, { open: true, count: sI.length }) : ""}`;
   }
   const shiftCard = x => { const o = allObs.filter(b => b.shiftId === x.id), n = insps.filter(b => b.shiftId === x.id).length;
-    return `<button class="item card2" data-shift="${x.id}"><span class="t">${shiftLine(x)}</span>${x.handover?.receiver?.name ? `<span class="s">→ Хүлээлгэсэн: <b>${esc(x.handover.receiver.name)}</b></span>` : ""}<span class="s">${countLine(n, o)}</span></button>`; };
+    return `<button class="item card2 kshift" data-shift="${x.id}"><span class="t">${shiftLine(x)}</span>${x.handover?.receiver?.name ? `<span class="s">→ Хүлээлгэсэн: <b>${esc(x.handover.receiver.name)}</b></span>` : ""}<span class="s">${countLine(n, o)}</span></button>`; };
   return {
     title: "Nubia Bird",
     html: `${top}
@@ -218,7 +218,7 @@ function supplySheet() {
 const routeCard = r => `<button class="route" data-route="${r.id}"><img src="${r.thumb}" alt=""><div><b>${r.id}</b> <span class="small">· ${r.km} км</span><div class="s">${esc(r.short)}</div></div><span class="go">›</span></button>`;
 function inspItem(x, allObs, long) {
   const o = allObs.filter(b => b.inspId === x.id);
-  return `<button class="item card2" data-insp="${x.id}"><span class="t">${long ? esc(x.staff) + " · " + fmtDate(x.start) + " " : ""}${esc(routeName(x.route))} · ${fmtTime(x.start)}–${x.end ? fmtTime(x.end) : "одоо"}</span>
+  return `<button class="item card2 ${x.shiftId ? "kshift" : "kextra"}" data-insp="${x.id}"><span class="t">${long ? esc(x.staff) + " · " + fmtDate(x.start) + " " : ""}${esc(routeName(x.route))} · ${fmtTime(x.start)}–${x.end ? fmtTime(x.end) : "одоо"}</span>
     ${long && x.coworkers?.length ? `<span class="s">${coLine(x)}</span>` : ""}
     ${x.km || x.routeNote ? `<span class="s">${[x.km ? x.km + " км" : "", esc(x.routeNote || "")].filter(Boolean).join(" · ")}</span>` : ""}
     <span class="s">${x.noBird ? "Шувуугүй" : countLine(null, o)}</span></button>`;

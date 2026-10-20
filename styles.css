@@ -7,7 +7,7 @@
   --bg:#eef0eb; --surface:#f9faf7; --surface-2:#e5e8e2; --fg:#1d2733; --muted:#5b6672; --line:#d5d9d1;
   --brand:#2a5aa6; --brand-ink:#ffffff; --brand-soft:#dfe7f3; --brand-strong:#1f4e9c;
   --accent:#b8323f; --ok:#2e7a4f; --warn:#a8650a; --crit:#b8323f; --none:#7d8794;
-  --ok-soft:#e2efe6; --warn-soft:#f6ead6; --crit-soft:#f5e1e2; --brand-line:#b9cbe6; --new:#6b3fa0; --new-soft:#ece4f5;
+  --ok-soft:#e2efe6; --warn-soft:#f6ead6; --crit-soft:#f5e1e2; --brand-line:#b9cbe6; --ok-line:#b8d8c3; --new:#6b3fa0; --new-soft:#ece4f5;
   --shadow:0 1px 2px rgba(29,39,51,.06),0 4px 14px rgba(29,39,51,.06);
   --radius:16px; --font:"Golos",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -18,13 +18,13 @@
   --bg:#11151a; --surface:#192028; --surface-2:#222a34; --fg:#e3e8ee; --muted:#98a3b0; --line:#2b3440;
   --brand:#7ea5e4; --brand-ink:#0d1726; --brand-soft:#1f2c40; --brand-strong:#9dbbee;
   --accent:#f08a93; --ok:#6cc08f; --warn:#e3a54e; --crit:#f08a93; --none:#7f8a97;
-  --ok-soft:#18301f; --warn-soft:#33270f; --crit-soft:#3a1d21; --brand-line:#2c4266; --new:#c7a6f0; --new-soft:#2c2240;
+  --ok-soft:#18301f; --warn-soft:#33270f; --crit-soft:#3a1d21; --brand-line:#2c4266; --ok-line:#2b5238; --new:#c7a6f0; --new-soft:#2c2240;
   --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#11151a; --surface:#192028; --surface-2:#222a34; --fg:#e3e8ee; --muted:#98a3b0; --line:#2b3440;
   --brand:#7ea5e4; --brand-ink:#0d1726; --brand-soft:#1f2c40; --brand-strong:#9dbbee;
   --accent:#f08a93; --ok:#6cc08f; --warn:#e3a54e; --crit:#f08a93; --none:#7f8a97;
-  --ok-soft:#18301f; --warn-soft:#33270f; --crit-soft:#3a1d21; --brand-line:#2c4266; --new:#c7a6f0; --new-soft:#2c2240;
+  --ok-soft:#18301f; --warn-soft:#33270f; --crit-soft:#3a1d21; --brand-line:#2c4266; --ok-line:#2b5238; --new:#c7a6f0; --new-soft:#2c2240;
   --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark}
 
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -268,6 +268,9 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .item.add{border-style:dashed;color:var(--brand-strong)}
 .item.card2 .t{grid-column:1/-1}
 .item.card2 .s b{color:var(--fg)}
+/* Ээлжийн карт цэнхэр, ээлжийн бус карт ногоон уусалттай */
+.item.card2.kshift{background:linear-gradient(105deg,var(--brand-soft) 0,var(--surface) 80%);border-color:var(--brand-line);box-shadow:inset 4px 0 0 var(--brand)}
+.item.card2.kextra{background:linear-gradient(105deg,var(--ok-soft) 0,var(--surface) 80%);border-color:var(--ok-line);box-shadow:inset 4px 0 0 var(--ok)}
 .badge.new{color:var(--new);background:var(--new-soft);border-color:transparent;font-size:11px;vertical-align:2px}
 .rp.free{border-style:dashed}
 .chipfind{display:grid;gap:8px}
