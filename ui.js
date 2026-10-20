@@ -125,18 +125,63 @@ function SigPad(wrap) {
 function pathEditor({ pts, track, me }, onDone) {
   const work = pts.map(p => [...p]);
   const wrap = document.createElement("div"); wrap.className = "mapfull"; wrap.setAttribute("role", "dialog"); wrap.setAttribute("aria-label", "Нислэгийн зам зурах");
-  wrap.innerHTML = `<div class="mfhead"><button type="button" class="btn sm" data-x>Болих</button><div class="grow"><b>Нислэгийн зам</b><div class="seq small" data-seq></div></div></div>
+  wrap.innerHTML = `<div class="mfhead"><button type="button" class="btn sm xbtn" data-x aria-label="Хадгалахгүй хаах">✕</button><div class="grow"><b>Нислэгийн зам</b><div class="seq small" data-seq></div></div></div>
     <div class="mfmap"></div>
-    <div class="small mfhint">Анх харсан цэгээ, дараа нь чиглэл өөрчилсөн газар бүрийг дарна.</div>
+    <div class="small mfhint">Анх харсан цэгээ, дараа нь чиглэл өөрчилсөн газар бүрийг нэг товшиж тэмдэглэнэ. Хоёр хуруугаар томруулна.</div>
     <div class="mffoot"><button type="button" class="btn" data-u>Буцаах</button><button type="button" class="btn" data-c>Арилгах</button><button type="button" class="btn p" data-ok>Болсон</button></div>`;
   document.body.appendChild(wrap); document.body.style.overflow = "hidden";
-  const seq = () => $("[data-seq]", wrap).textContent = work.length ? work.map(p => Geo.cell(p)).join(" → ") : "Цэг сонгоогүй";
-  const pm = PathMap($(".mfmap", wrap), { pts: work, track, me, onChange: seq }); seq();
+  const seq = () => $("[data-seq]", wrap).textContent = work.length ? pathTxt(work) : "Цэг сонгоогүй";
+  const pm = PathMap($(".mfmap", wrap), { pts: work, track, me, onChange: seq, rotatable: true }); seq();
   const close = () => { pm.destroy(); wrap.remove(); document.body.style.overflow = ""; };
   $("[data-u]", wrap).onclick = () => pm.undo();
   $("[data-c]", wrap).onclick = () => pm.clear();
   $("[data-x]", wrap).onclick = close;
   $("[data-ok]", wrap).onclick = () => { close(); onDone(work); };
+}
+
+/* Зураг бүтэн дэлгэцээр: хоёр хуруугаар томруулж, нэг хуруугаар гүйлгэнэ, хоёр товшвол томорно. "Хэвтээ" нь 90° эргүүлнэ. */
+function imgViewer(src, title) {
+  const wrap = document.createElement("div"); wrap.className = "imgview"; wrap.setAttribute("role", "dialog"); wrap.setAttribute("aria-label", title);
+  wrap.innerHTML = `<div class="ivhead"><b class="grow">${esc(title)}</b><button type="button" class="btn sm" data-rot aria-pressed="false">⟳ Хэвтээ</button><button type="button" class="btn sm xbtn" data-x aria-label="Хаах">✕</button></div>
+    <div class="ivstage"><img src="${src}" alt="${esc(title)}" draggable="false"></div><div class="ivhint">Хоёр хуруугаар томруулна · хоёр товшвол томорно</div>`;
+  document.body.appendChild(wrap); document.body.style.overflow = "hidden";
+  const stage = $(".ivstage", wrap), img = $("img", stage), ptrs = new Map();
+  let s = 1, tx = 0, ty = 0, rot = 0, g0 = null, lastTap = 0;
+  const box = () => stage.getBoundingClientRect();
+  const fit = () => { const r = box(), iw = img.naturalWidth || 1, ih = img.naturalHeight || 1; return Math.min(r.width / (rot ? ih : iw), r.height / (rot ? iw : ih)); };
+  const apply = () => {
+    if (s <= 1) { s = 1; tx = 0; ty = 0; }
+    const r = box(), iw = img.naturalWidth, ih = img.naturalHeight; if (!iw) return;
+    img.style.width = iw + "px"; img.style.height = ih + "px";
+    img.style.transform = `translate(${r.width / 2 + tx}px,${r.height / 2 + ty}px) scale(${fit() * s}) rotate(${rot * 90}deg) translate(${-iw / 2}px,${-ih / 2}px)`;
+  };
+  const zoomAt = (ns, x, y, from) => { const r = box(), cx = x - r.left - r.width / 2, cy = y - r.top - r.height / 2; ns = Math.min(8, Math.max(1, ns));
+    tx = cx - (cx - from.tx) * ns / from.s; ty = cy - (cy - from.ty) * ns / from.s; s = ns; apply(); };
+  img.onload = apply; if (img.complete) apply();
+  const onResize = () => apply(); addEventListener("resize", onResize);
+  const close = () => { removeEventListener("resize", onResize); removeEventListener("keydown", onKey); wrap.remove(); document.body.style.overflow = ""; };
+  const onKey = e => { if (e.key === "Escape") close(); }; addEventListener("keydown", onKey);
+  $("[data-x]", wrap).onclick = close;
+  $("[data-rot]", wrap).onclick = e => { rot = rot ? 0 : 1; s = 1; e.currentTarget.setAttribute("aria-pressed", !!rot); apply(); };
+  const pts = () => [...ptrs.values()];
+  stage.addEventListener("pointerdown", e => {
+    stage.setPointerCapture?.(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const P = pts();
+    if (P.length === 2) g0 = { d: Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y), mx: (P[0].x + P[1].x) / 2, my: (P[0].y + P[1].y) / 2, s, tx, ty };
+    else if (P.length === 1) {
+      g0 = { x: e.clientX, y: e.clientY, s, tx, ty };
+      if (Date.now() - lastTap < 300) { zoomAt(s > 1.5 ? 1 : 2.5, e.clientX, e.clientY, { s, tx, ty }); lastTap = 0; g0 = null; } else lastTap = Date.now();
+    }
+  });
+  stage.addEventListener("pointermove", e => {
+    if (!ptrs.has(e.pointerId) || !g0) return; ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const P = pts();
+    if (P.length >= 2 && g0.d) { const d = Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y), mx = (P[0].x + P[1].x) / 2, my = (P[0].y + P[1].y) / 2;
+      zoomAt(g0.s * d / g0.d, g0.mx, g0.my, g0); tx += mx - g0.mx; ty += my - g0.my; apply(); }
+    else if (P.length === 1 && g0.x != null && s > 1) { tx = g0.tx + e.clientX - g0.x; ty = g0.ty + e.clientY - g0.y; apply(); }
+  });
+  const up = e => { ptrs.delete(e.pointerId); const P = pts(); g0 = P.length === 1 ? { x: P[0].x, y: P[0].y, s, tx, ty } : null; };
+  stage.addEventListener("pointerup", up); stage.addEventListener("pointercancel", up);
 }
 
 /* Зүйлийн эрсдэл: богино мөр ба "Дэлгэрэнгүй" карт */

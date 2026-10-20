@@ -58,7 +58,7 @@ const riskBadge = sp => { const r = riskOf(sp); return r ? `<span class="badge r
 const obsItem = o => `<button type="button" class="item" data-obs="${o.id}">
   <span class="t ${riskOf(o.sp) === 3 ? "r3" : ""}">${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}${o.newSp ? ` <span class="badge new">Шинэ</span>` : ""}</span>
   <span class="badge ${o.done ? "done" : "todo"}">${o.done ? "Бүрэн" : "Дутуу"}</span>
-  <span class="s">${fmtTime(o.t)} · ${esc(listTxt(o.arga))}${asList(o.beh).length ? " · " + esc(listTxt(o.beh)) : ""}${o.pts.length ? " · " + o.pts.map(p => Geo.cell(p)).join("→") : ""}${o.photos.length ? " · 📷" + o.photos.length : ""}</span></button>`;
+  <span class="s">${fmtTime(o.t)} · ${esc(listTxt(o.arga))}${asList(o.beh).length ? " · " + esc(listTxt(o.beh)) : ""}${o.pts.length ? " · " + esc(pathTxt(o.pts, 4, "→")) : ""}${o.photos.length ? " · 📷" + o.photos.length : ""}</span></button>`;
 function bindObsItems(root) { $$("[data-obs]", root).forEach(b => b.onclick = () => App.go("obs", { id: b.dataset.obs })); }
 async function usageSorted(base, group) {
   const u = await DB.meta("usage", {});
@@ -88,13 +88,13 @@ function staffButtons(staff, exclude, selected) {
 function askNewStaff() {
   return new Promise(res => {
     const scrim = document.createElement("div"); scrim.className = "scrim center";
-    scrim.innerHTML = `<form class="dialog"><div style="font-weight:650;font-size:17px">Нэр нэмэх</div><input type="text" name="n" placeholder="Нэр (жишээ нь Б.Болд)" autocomplete="off"><input type="text" name="p" placeholder="Албан тушаал (заавал биш)" autocomplete="off"><div class="row"><button type="button" class="btn" data-r="no">Болих</button><button class="btn p">Болсон</button></div></form>`;
+    scrim.innerHTML = `<form class="dialog"><div style="font-weight:650;font-size:17px">Нэр нэмэх</div><input type="text" name="n" placeholder="Нэр (жишээ нь Б.Болд)" autocomplete="off"><input type="text" name="p" placeholder="Албан тушаал (заавал биш)" autocomplete="off"><label class="check"><span>Цаашид жагсаалтад хадгалах</span><input type="checkbox" class="toggle" name="keep"></label><div class="row"><button type="button" class="btn" data-r="no">Болих</button><button class="btn p">Болсон</button></div></form>`;
     document.body.appendChild(scrim);
     const f = $("form", scrim); setTimeout(() => f.n.focus(), 50);
     f.onsubmit = async e => {
       e.preventDefault(); const n = f.n.value.trim(), p = f.p.value.trim();
       if (!n) { f.n.focus(); toast("Нэрээ бичнэ үү"); return; }
-      scrim.remove(); await Store.addStaff(n, p); res([n, p]);
+      scrim.remove(); if (f.keep.checked) await Store.addStaff(n, p); res([n, p]);
     };
     $("[data-r=no]", scrim).onclick = () => { scrim.remove(); res(null); };
   });
@@ -148,6 +148,34 @@ function bindStaffPicker(box, st, onChange) {
   $$("[data-co]", box).forEach(c => c.hidden = c.dataset.co === st.staff);
 }
 const KEEP_CAR = "Цаашид жагсаалтад хадгалах";
+/* Ээлжийн статистик: Үзлэг · Зүйл · Бодгаль · Давтамж · Үргээлэг */
+const shiftStats = (insps, obs) => `<div class="stats">${[[insps.length, "Үзлэг"], [new Set(obs.filter(o => o.sp).map(o => o.sp)).size, "Зүйл"], [sum(obs, o => +o.n || 0), "Бодгаль"], [obs.length, "Давтамж"], [obs.filter(o => hasArga(o, "Үргээлэг")).length, "Үргээлэг"]]
+  .map(([n, t]) => `<div class="stat"><b>${n}</b><span>${t}</span></div>`).join("")}</div>`;
+/* Хүлээн авах сум: өмнөх ээлжээс үлдсэн (автомат) + нэмсэн/хассан + тайлбар = нийт */
+const AMMO_GUNS = [["sig", "Дохионы бууны сум"], ["gun", "Ангийн бууны сум"]];
+const ammoInHtml = (prev, prevLabel = "Өмнөх ээлжээс үлдсэн") => `<div class="ammoin">${AMMO_GUNS.map(([k, l]) => `<div class="ammorow" data-g="${k}">
+    <div class="grow"><b>${l}</b><div class="small">${prevLabel}: <b data-prev>${prev[k] ?? 0}</b></div></div>
+    <div class="pm" role="group" aria-label="Нэмсэн эсвэл хассан"><button type="button" data-sign="1" aria-pressed="true">+</button><button type="button" data-sign="-1" aria-pressed="false">−</button></div>
+    <input type="number" inputmode="numeric" min="0" data-adj placeholder="0" aria-label="${l}: нэмсэн/хассан тоо">
+    <div class="tot">= <b data-tot>${prev[k] ?? 0}</b></div></div>`).join("")}
+  <div class="field"><span class="label">Тайлбар (нэмсэн, хассан бол)</span><input type="text" data-anote placeholder="жишээ нь агуулахаас авсан, буцааж өгсөн"></div></div>`;
+function bindAmmoIn(root, prevOf) {
+  const box = $(".ammoin", root), adj = k => { const r = $(`[data-g="${k}"]`, box), n = Math.max(0, +$("[data-adj]", r).value || 0); return $("[data-sign='-1']", r).getAttribute("aria-pressed") === "true" ? -n : n; };
+  const refresh = () => AMMO_GUNS.forEach(([k]) => { const r = $(`[data-g="${k}"]`, box), p = prevOf()[k] ?? 0; $("[data-prev]", r).textContent = p; $("[data-tot]", r).textContent = Math.max(0, p + adj(k)); });
+  $$("[data-sign]", box).forEach(b => b.onclick = () => { $$("[data-sign]", b.parentElement).forEach(x => x.setAttribute("aria-pressed", x === b)); refresh(); });
+  $$("[data-adj]", box).forEach(i => i.oninput = refresh);
+  refresh();
+  return {
+    refresh,
+    get() { const p = prevOf(), a = { sigPrev: p.sig ?? 0, gunPrev: p.gun ?? 0, sigAdj: adj("sig"), gunAdj: adj("gun"), note: $("[data-anote]", box).value.trim() };
+      return { ...a, sig: Math.max(0, a.sigPrev + a.sigAdj), gun: Math.max(0, a.gunPrev + a.gunAdj) }; }
+  };
+}
+/* Сэлфи товч: holder.selfie-д хадгална */
+function selfieField(box, holder) {
+  const draw = async () => { const u = holder.selfie ? await Store.blobURL(holder.selfie) : ""; box.innerHTML = u ? `<img class="selfie" src="${u}" alt="Сэлфи">` : `<button type="button" class="btn soft selfiebtn">${ICON.cam}<span>Сэлфи</span></button>`; $("button,img", box).onclick = async () => { const b = await pickPhoto("user", { gallery: false }); if (b) { holder.selfie = await Store.putBlob(b, "Сэлфи"); draw(); } }; };
+  draw();
+}
 const lenChips = v => chips("len", SHIFT_LEN.map(String), String(v), { fill: true, own: true, ownType: "number", ownSuffix: " цаг", ownLabel: "Бичих…", labels: SHIFT_LEN.map(n => n + " цаг") });
 
 /* ---------- Дэлгэцүүд ---------- */
@@ -155,7 +183,7 @@ const Views = {};
 
 /* Нүүр */
 Views.home = async () => {
-  const s = Store.shift, i = Store.insp;
+  const s = Store.shift, i = Store.insp, pend = s ? null : await Store.pendingShift();
   const [shifts, insps, allObs] = await Promise.all([DB.all("shifts"), DB.all("insps"), DB.all("obs")]);
   const past = shifts.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 15);
   const extras = insps.filter(x => !x.shiftId).sort((a, b) => b.start - a.start).slice(0, 15);
@@ -163,7 +191,12 @@ Views.home = async () => {
   const liveBanner = i ? `<div class="banner info"><b>${esc(routeName(i.route))}</b><span class="grow">${i.shiftId ? "" : "ээлжийн бус "}үзлэг явагдаж байна · ${fmtDur(Date.now() - i.start)}</span></div>
     <button class="btn p xl" data-go="insp">Үзлэг үргэлжлүүлэх</button>` : "";
   let top = "";
-  if (!s) {
+  if (!s && pend) {
+    top = `<div class="card hero"><p class="h">Ээлж</p><div class="title">Ээлж хүлээн авах</div>
+      <div class="sub"><b>${esc(pend.staff)}</b> ${fmtDT(pend.end)}-д ээлжээ хүлээлцэхгүй дуусгаж, зүйлсээ үлдээсэн.</div>
+      ${liveBanner || `<button class="btn p xl" data-go="takeover">Ээлж авах</button>
+      <button class="btn" data-go="inspStart">${ICON.plus} Ээлжийн бус үзлэг</button>`}</div>`;
+  } else if (!s) {
     top = `<div class="card hero"><p class="h">Ээлж</p><div class="title">Ээлж эхлээгүй байна</div>
       ${liveBanner || `<div class="sub">Үндсэн ээлжийг эхлүүлнэ. Нэмэлт машин, илүү цагаар гарсан бол ээлжийн бус үзлэг хийнэ.</div>
       <button class="btn p xl" data-go="shiftStart">Ээлж эхлүүлэх</button>
@@ -174,16 +207,18 @@ Views.home = async () => {
     top = `<div class="card hero"><p class="h">Одоогийн ээлж</p>
       <div class="title">${esc(s.staff)}</div>
       <div class="sub">${fmtDT(s.start)} – ${fmtTime(shiftEnd(s))} (${s.len} цаг) · ${esc(s.car)}${s.coworkers?.length ? "<br>" + coLine(s) : ""}</div>
-      <div class="stats"><div class="stat"><b>${sI.length}</b><span>Үзлэг</span></div><div class="stat"><b>${sO.length}</b><span>Ажиглалт</span></div><div class="stat"><b>${sO.filter(o => hasArga(o, "Үргээлэг")).length}</b><span>Үргээлэг</span></div></div>
+      ${shiftStats(sI, sO)}
+      ${ammoInTxt(s) ? `<div class="small">Хүлээн авсан сум: ${esc(ammoInTxt(s))}${s.from ? " (өмнөх ээлжээс)" : ""}</div>` : ""}
       ${over ? `<div class="banner warn"><b>!</b><span class="grow">Ээлжийн хугацаа дууссан. Ээлжээ хүлээлгэнэ үү.</span></div>` : ""}
       ${s.supplies?.length ? `<div class="small">Дундуур авсан: ${esc(supplyTxt(s))}</div>` : ""}
       ${liveBanner || `<button class="btn p xl" data-go="inspStart">${ICON.plus} Үзлэг эхлүүлэх</button>`}
-      <div class="row">${i ? "" : `<button class="btn soft" data-go="inspStart" data-kind="extra">Ээлжийн бус үзлэг</button>`}<button class="btn soft" id="supply">+ Буу, сум авсан</button></div>
-      <button class="btn" data-go="handover">Ээлж хүлээлгэх</button></div>
+      <div class="row">${i ? "" : `<button class="btn soft" data-go="inspStart" data-kind="extra">Ээлжийн бус үзлэг</button>`}<button class="btn soft" id="supply">± Буу, сум</button></div>
+      <button class="btn" data-go="handover">Ээлж хүлээлгэх</button>
+      <button class="btn sm ghost solo" data-go="handover" data-kind="solo">Хүлээлцэхгүй дуусгах</button></div>
       ${sI.length ? fold("cur-insps", "Энэ ээлжийн үзлэг", `<div class="list">${sI.map(x => inspItem(x, allObs)).join("")}</div>`, { open: true, count: sI.length }) : ""}`;
   }
   const shiftCard = x => { const o = allObs.filter(b => b.shiftId === x.id), n = insps.filter(b => b.shiftId === x.id).length;
-    return `<button class="item card2 kshift" data-shift="${x.id}"><span class="t">${shiftLine(x)}</span>${x.handover?.receiver?.name ? `<span class="s">→ Хүлээлгэсэн: <b>${esc(x.handover.receiver.name)}</b></span>` : ""}<span class="s">${countLine(n, o)}</span></button>`; };
+    return `<button class="item card2 kshift" data-shift="${x.id}"><span class="t">${shiftLine(x)}</span>${x.handover?.pending ? `<span class="s">Хүлээлцээгүй, зүйлсээ үлдээсэн</span>` : x.handover?.receiver?.name ? `<span class="s">→ ${x.handover.solo ? "Үлдээсэн, шалгаж авсан" : "Хүлээлгэсэн"}: <b>${esc(x.handover.receiver.name)}</b></span>` : ""}<span class="s">${countLine(n, o)}</span></button>`; };
   return {
     title: "Nubia Bird",
     html: `${top}
@@ -202,17 +237,19 @@ Views.home = async () => {
 };
 /* Ээлжийн дунд буу, сум авсныг бүртгэх */
 function supplySheet() {
-  const st = { item: SUPPLY_ITEMS[1] };
-  openSheet("Буу, сум авсан", `<div class="field"><span class="label">Юу авсан</span>${chips("item", SUPPLY_ITEMS, st.item, { fill: true })}</div>
+  const st = { item: SUPPLY_ITEMS[1], dir: "Авсан" };
+  openSheet("Буу, сум авсан, өгсөн", `<div class="field" id="dirf">${chips("dir", ["Авсан", "Буцааж өгсөн"], st.dir, { fill: true })}</div>
+    <div class="field"><span class="label">Юу</span>${chips("item", SUPPLY_ITEMS, st.item, { fill: true })}</div>
     <div class="field" id="nf"><span class="label">Хэдэн ширхэг</span><input type="number" inputmode="numeric" id="sn" min="1" placeholder="Тоо"></div>
     <div class="field"><span class="label">Тайлбар (заавал биш)</span><input type="text" id="snote" placeholder="жишээ нь хэнээс авсан"></div>
     <button class="btn p xl" id="sok">Хадгалах</button>`, (b, close) => {
-    bindChips(b, (k, v) => { st.item = v; $("#nf", b).hidden = v === "Ангийн буу"; });
+    bindChips(b, (k, v) => { if (k === "dir") st.dir = v; else { st.item = v; $("#nf", b).hidden = v === "Ангийн буу"; $("#dirf", b).hidden = v === "Ангийн буу"; } });
     $("#sok", b).onclick = async () => {
       const n = st.item === "Ангийн буу" ? 1 : +$("#sn", b).value;
       if (!(n > 0)) { toast("Тоогоо бичнэ үү"); $("#sn", b).focus(); return; }
-      await Store.addSupply(st.item, n, $("#snote", b).value.trim());
-      close(); toast(`${st.item} бүртгэгдлээ`); App.render();
+      const back = st.dir !== "Авсан" && st.item !== "Ангийн буу";
+      await Store.addSupply(st.item, back ? -n : n, $("#snote", b).value.trim());
+      close(); toast(`${st.item} ${back ? "буцааж өгсөн" : "авсан"} бүртгэгдлээ`); App.render();
     };
   });
 }
@@ -229,25 +266,24 @@ function inspItem(x, allObs, long) {
 Views.shiftStart = async () => {
   if (Store.shift) { setTimeout(() => App.go("home", {}, { reset: true })); return { title: "", html: "" }; }
   const staff = await Store.staffList();
-  const st = { staff: null, pos: "", coworkers: [], len: 24, car: CARS[0] }, cars = await Store.carList();
+  const st = { staff: null, pos: "", coworkers: [], len: 24, car: CARS[0] }, cars = await Store.carList(), prev = await Store.lastAmmo();
   return {
     title: "Ээлж эхлүүлэх", tab: "home",
     html: `<div class="card"><p class="h">1. Ажилтан</p><div id="sp">${staffPicker(staff, st)}</div></div>
       <div class="card"><p class="h">2. Ээлжийн хугацаа</p>${lenChips(24)}</div>
       <div class="card"><p class="h">3. Машин</p>${chips("car", cars, CARS[0], { fill: true, own: true, ownKeep: KEEP_CAR })}</div>
-      <div class="card"><p class="h">4. Хүлээн авсан сум (заавал биш)</p><div class="row">
-        <div class="field grow"><span class="label">Дохионы бууны сум</span><input type="number" inputmode="numeric" id="sig" placeholder="Тоо"></div>
-        <div class="field grow"><span class="label">Ангийн бууны сум</span><input type="number" inputmode="numeric" id="gun" placeholder="Тоо"></div></div>
-        <div class="small">Ээлжийн дундуур буу, сум авбал нүүрэн дээрх «+ Буу, сум авсан» товчоор нэмнэ.</div></div>
+      <div class="card"><p class="h">4. Хүлээн авсан сум</p>${ammoInHtml(prev)}
+        <div class="small">Ээлжийн дундуур буу, сум авсан, өгсөн бол нүүрэн дээрх «± Буу, сум» товчоор бүртгэнэ.</div></div>
       <button class="btn p xl" id="go" disabled>Ээлж эхлүүлэх</button>`,
     mount(m) {
       bindStaffPicker($("#sp", m), st, () => $("#go", m).disabled = !st.staff);
+      const ammo = bindAmmoIn(m, () => prev);
       bindChips(m, (k, v, b) => { if (k === "len") st.len = +v; if (k === "car") { st.car = v; if (b?.dataset.keep) Store.addCar(v); } });
       $("#go", m).onclick = async () => {
         if (Store.shift) { toast("Ээлж аль хэдийн эхэлсэн байна"); return; }
         if (!(st.len > 0)) { toast("Ээлжийн хугацааг сонгоно уу"); return; }
-        const num = id => { const v = $(id, m).value; return v === "" ? null : +v; };
-        await Store.startShift({ staff: st.staff, pos: st.pos, coworkers: st.coworkers, len: st.len, car: st.car, sigAmmo: num("#sig"), gunAmmo: num("#gun") });
+        const a = ammo.get();
+        await Store.startShift({ staff: st.staff, pos: st.pos, coworkers: st.coworkers, len: st.len, car: st.car, sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a });
         toast("Ээлж эхэллээ"); App.go("home", {}, { reset: true });
       };
     }
@@ -261,12 +297,15 @@ Views.route = async ({ id }) => {
     title: `Маршрут ${r.id}`, tab: "home",
     html: `<div class="card"><div class="row between"><div class="title">${r.id}</div><span class="badge" style="color:var(--brand)">${r.km} км</span></div>
       <div class="sub">${esc(r.short)}</div>
-      <a href="${r.img}" target="_blank" rel="noopener"><img class="zoomimg" src="${r.img}" alt="Маршрут ${r.id}-ийн зураг"></a>
+      <button type="button" class="zoombtn" id="zoom" aria-label="Зургийг томоор харах"><img class="zoomimg" src="${r.img}" alt="Маршрут ${r.id}-ийн зураг"></button>
       <div class="small">Зураг дээр дарж томоор харна.</div></div>
       <div class="card"><p class="h">Хэзээ хэрэглэх</p><ul style="margin:0;padding-left:20px;display:grid;gap:6px">${r.when.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
       ${["М-1", "М-2", "М-3"].includes(r.id) ? `<p class="h" style="margin-top:6px">Урьдчилан сэргийлэх үзлэг</p><ul style="margin:0;padding-left:20px;display:grid;gap:4px">${ROUTE_RULES.map(w => `<li class="sub">${esc(w)}</li>`).join("")}</ul>` : ""}</div>
       ${canStart ? `<button class="btn p xl" id="start">Энэ маршрутаар үзлэг эхлүүлэх</button>` : ""}`,
-    mount(m) { $("#start", m)?.addEventListener("click", () => App.go("inspStart", { route: r.id }, { replace: true })); }
+    mount(m) {
+      $("#zoom", m).onclick = () => imgViewer(r.img, `Маршрут ${r.id}`);
+      $("#start", m)?.addEventListener("click", () => App.go("inspStart", { route: r.id }, { replace: true }));
+    }
   };
 };
 
@@ -463,7 +502,7 @@ Views.obs = async ({ id, inspId, draft }) => {
       const ins = o.inspId ? await DB.get("insps", o.inspId) : null, track = ins ? ins.track.map(p => [p[0], p[1]]) : [], me = o.lat ? [o.lat, o.lon] : null;
       let prev = null;
       const drawPath = () => {
-        $("#seq", m).textContent = o.pts.length ? o.pts.map(p => Geo.cell(p)).join(" → ") : "Зам зураагүй";
+        $("#seq", m).textContent = o.pts.length ? pathTxt(o.pts) : "Зам зураагүй";
         $("#draw span", m).textContent = o.pts.length ? "Зам засах" : "Зам зурах";
         prev?.destroy(); prev = null; $("#pathprev", m).innerHTML = "";
         if (o.pts.length) prev = PathMap($("#pathprev", m), { pts: o.pts, track, me, readonly: true });
@@ -547,22 +586,23 @@ Views.shiftView = async ({ id }) => {
   return {
     title: "Ээлж", tab: "home",
     html: `<div class="card"><div class="title" style="font-size:18px">${shiftLine(s)}</div><div class="sub">${esc(s.pos)} · ${esc(s.car)}${s.coworkers?.length ? "<br>" + coLine(s) : ""}</div>
-      <div class="stats"><div class="stat"><b>${insps.length}</b><span>Үзлэг</span></div><div class="stat"><b>${obs.length}</b><span>Ажиглалт</span></div><div class="stat"><b>${obs.filter(o => hasArga(o, "Үргээлэг")).length}</b><span>Үргээлэг</span></div></div></div>
-      ${h ? `<div class="card"><p class="h">Хүлээлцсэн · ${fmtDT(h.at)}</p><div class="row" style="justify-content:space-around;text-align:center">
+      ${shiftStats(insps, obs)}
+      ${ammoInTxt(s) ? `<div class="small">Хүлээн авсан сум: ${esc(ammoInTxt(s))}</div>` : ""}</div>
+      ${h ? `<div class="card"><p class="h">${h.pending ? "Хүлээлцээгүй, үлдээсэн" : h.solo ? "Үлдээсэн, шалгаж авсан" : "Хүлээлцсэн"} · ${fmtDT(h.at)}${h.solo && h.takenAt ? " → " + fmtDT(h.takenAt) : ""}</p><div class="row" style="justify-content:space-around;text-align:center">
         <div>${gs ? `<img class="selfie" src="${gs}" alt="">` : ""}<div class="small">Өгсөн</div><b>${esc(h.giver.name)}</b></div>
-        <div>${rs ? `<img class="selfie" src="${rs}" alt="">` : ""}<div class="small">Авсан</div><b>${esc(h.receiver.name)}</b></div></div>
-        <dl class="kv"><dt>Машин</dt><dd>${esc(h.car.name)} · ${esc(h.car.km)} км</dd><dt>Түлш</dt><dd>${esc(h.car.fuel)}</dd><dt>Цэвэрхэн байдал</dt><dd>${esc(h.car.clean)}</dd><dt>Дохионы сум</dt><dd>${h.sigAmmo ?? "—"}</dd><dt>Ангийн сум</dt><dd>${h.gunAmmo ?? "—"}</dd>${s.supplies?.length ? `<dt>Дундуур авсан</dt><dd>${esc(supplyTxt(s))}</dd>` : ""}
+        <div>${rs ? `<img class="selfie" src="${rs}" alt="">` : ""}<div class="small">Авсан</div><b>${esc(h.receiver.name || "—")}</b></div></div>
+        <dl class="kv"><dt>Машин</dt><dd>${esc(h.car.name)} · ${esc(h.car.km)} км</dd><dt>Түлш</dt><dd>${esc(h.car.fuel)}</dd><dt>Цэвэрхэн байдал</dt><dd>${esc(h.car.clean)}</dd><dt>Дохионы сум</dt><dd>${h.sigAmmo ?? "—"}</dd><dt>Ангийн сум</dt><dd>${h.gunAmmo ?? "—"}</dd>${s.supplies?.length ? `<dt>Дундуур авсан, өгсөн</dt><dd>${esc(supplyTxt(s))}</dd>` : ""}${h.ammoAdj && (h.ammoAdj.sigAdj || h.ammoAdj.gunAdj) ? `<dt>Шинэ ээлжид сум</dt><dd>Дохионы ${h.ammoAdj.sigAdj}, Ангийн ${h.ammoAdj.gunAdj}${h.ammoAdj.note ? " · " + esc(h.ammoAdj.note) : ""}</dd>` : ""}${h.check?.note ? `<dt>Шалгаж авсан тэмдэглэл</dt><dd>${esc(h.check.note)}</dd>` : ""}
         ${missEq.map(e => `<dt>${esc(e)}</dt><dd class="r3">Байхгүй${h.equipNotes?.[e] ? ": " + esc(h.equipNotes[e]) : ""}</dd>`).join("")}</dl></div>` : ""}
-      <p class="sec">Үзлэгүүд</p><div class="list">${insps.map(x => `<button class="item" data-insp="${x.id}"><span class="t">${esc(routeName(x.route))} · ${fmtTime(x.start)}–${x.end ? fmtTime(x.end) : ""}</span><span class="small">${x.km || 0} км</span><span class="s">${x.noBird ? "Шувуугүй" : obs.filter(o => o.inspId === x.id).length + " ажиглалт"}</span></button>`).join("") || `<div class="empty">Үзлэг алга</div>`}</div>`,
+      <p class="sec">Үзлэгүүд</p><div class="list">${insps.map(x => `<button class="item" data-insp="${x.id}"><span class="t">${esc(routeName(x.route))} · ${fmtTime(x.start)}–${x.end ? fmtTime(x.end) : ""}</span><span class="small">${x.km || 0} км</span><span class="s">${x.noBird ? "Шувуугүй" : countLine(null, obs.filter(o => o.inspId === x.id))}</span></button>`).join("") || `<div class="empty">Үзлэг алга</div>`}</div>`,
     mount(m) { $$("[data-insp]", m).forEach(b => b.onclick = () => App.go("inspView", { id: b.dataset.insp })); }
   };
 };
 
 /* Ээлж хүлээлцэх */
-Views.handover = async () => {
-  const s = Store.shift;
-  if (!s) return { title: "Ээлж хүлээлгэх", html: `<div class="empty">Идэвхтэй ээлж алга.</div>` };
-  if (Store.insp) return { title: "Ээлж хүлээлгэх", tab: "home", html: `<div class="banner warn"><b>!</b><span class="grow">${esc(routeName(Store.insp.route))} үзлэг явагдаж байна. Эхлээд үзлэгээ дуусгана уу.</span></div><button class="btn p" id="g">Үзлэг рүү очих</button>`, mount: m => $("#g", m).onclick = () => App.go("insp") };
+Views.handover = async ({ kind } = {}) => {
+  const s = Store.shift, solo = kind === "solo", T = solo ? "Хүлээлцэхгүй дуусгах" : "Ээлж хүлээлгэх";
+  if (!s) return { title: T, html: `<div class="empty">Идэвхтэй ээлж алга.</div>` };
+  if (Store.insp) return { title: T, tab: "home", html: `<div class="banner warn"><b>!</b><span class="grow">${esc(routeName(Store.insp.route))} үзлэг явагдаж байна. Эхлээд үзлэгээ дуусгана уу.</span></div><button class="btn p" id="g">Үзлэг рүү очих</button>`, mount: m => $("#g", m).onclick = () => App.go("insp") };
   const insps = (await DB.all("insps")).filter(i => i.shiftId === s.id), obs = (await DB.all("obs")).filter(o => o.shiftId === s.id);
   const routes = Object.fromEntries(ROUTE_IDS.map(r => [r, insps.filter(i => i.route === r).length]));
   const used = sum(obs, o => +o.ammoSig || 0), gunUsed = sum(obs, o => +o.ammoGun || 0), kills = obs.filter(o => hasArga(o, "Устгал"));
@@ -576,11 +616,11 @@ Views.handover = async () => {
     giver: { name: s.staff, pos: s.pos, selfie: null, sign: null }, receiver: { name: "", pos: "", selfie: null, sign: null }, len: 24 };
   const rcv = { staff: null, pos: "", coworkers: [] };
   return {
-    title: "Ээлж хүлээлгэх", tab: "home",
-    html: `${todo ? `<div class="banner warn"><b>${todo}</b><span class="grow">ажиглалт дутуу байна. Хүлээлгэхээс өмнө бөглөхийг зөвлөж байна.</span><button class="btn sm" id="todo">Бөглөх</button></div>` : ""}
+    title: T, tab: "home",
+    html: `${solo ? `<div class="banner info"><b>i</b><span class="grow">Хүлээн авах хүн одоо байхгүй үед ашиглана. Бүх зүйлээ бичиж үлдээнэ. Дараагийн ажилтан «Ээлж авах» дарж шалгаад, сэлфи хийж авна.</span></div>` : ""}${todo ? `<div class="banner warn"><b>${todo}</b><span class="grow">ажиглалт дутуу байна. Хүлээлгэхээс өмнө бөглөхийг зөвлөж байна.</span><button class="btn sm" id="todo">Бөглөх</button></div>` : ""}
       <div class="card"><p class="h">1. Ээлжийн тэмдэглэл (автомат)</p>
         <div class="stats">${ROUTE_IDS.map(r => `<div class="stat"><b>${routes[r]}</b><span>${r === FREE_ROUTE ? "Чөлөөт" : r}</span></div>`).join("")}<div class="stat"><b>${insps.length}</b><span>Нийт үзлэг</span></div></div>
-        <dl class="kv"><dt>Нийт ажиглалт</dt><dd>${obs.length}</dd>${byArga.map(([a, n]) => `<dt>${esc(a)}</dt><dd>${n}</dd>`).join("")}
+        <dl class="kv"><dt>Зүйл</dt><dd>${new Set(obs.filter(o => o.sp).map(o => o.sp)).size}</dd><dt>Бодгаль</dt><dd>${sum(obs, o => +o.n || 0)}</dd><dt>Давтамж</dt><dd>${obs.length}</dd>${byArga.map(([a, n]) => `<dt>${esc(a)}</dt><dd>${n}</dd>`).join("")}
         <dt>Ангийн бууны сум</dt><dd>${gunUsed}</dd><dt>Дохионы бууны сум</dt><dd>${used}</dd><dt>Устгал</dt><dd>${kills.length ? kills.map(k => esc(k.sp) + " " + k.n).join(", ") : "байхгүй"}</dd>
         <dt>III түвшний шувуу</dt><dd>${obs.filter(o => riskOf(o.sp) === 3).length ? "Харсан" : "Хараагүй"}</dd></dl></div>
       <div class="card"><p class="h">2. Тоног төхөөрөмж</p><div class="small">Байхгүй, эвдэрсэн бол унтрааж, шалтгааныг бичнэ.</div>
@@ -588,8 +628,8 @@ Views.handover = async () => {
           <input type="text" class="eqnote" data-eqn="${k}" placeholder="Тайлбар: юу болсон, хаана байгаа" hidden></div>`).join("")}
         <div class="row" style="margin-top:6px"><div class="field grow"><span class="label">Дохионы бууны сум</span><input type="number" inputmode="numeric" id="sig" value="${expected ?? ""}" placeholder="Тоолсон"></div>
         <div class="field grow"><span class="label">Ангийн бууны сум</span><input type="number" inputmode="numeric" id="gun" value="${gunExp ?? ""}" placeholder="Тоолсон"></div></div>
-        <div class="small">${expected != null ? `Дохионы: авсан ${s.sigAmmoStart || 0}${sigIn ? ` + дундуур ${sigIn}` : ""} − зарцуулсан ${used} = ${expected}` : `Дохионы сум зарцуулсан: ${used}`} · ${gunExp != null ? `Ангийн: авсан ${s.gunAmmoStart || 0}${gunIn ? ` + дундуур ${gunIn}` : ""} − зарцуулсан ${gunUsed} = ${gunExp}` : `Ангийн сум зарцуулсан: ${gunUsed}`}</div>
-        ${s.supplies?.length ? `<div class="small">Ээлжийн дунд авсан: ${esc(supplyTxt(s))}</div>` : ""}
+        <div class="small">${expected != null ? `Дохионы: хүлээн авсан ${s.sigAmmoStart || 0}${sigIn ? ` ${sigIn < 0 ? "−" : "+"} дундуур ${Math.abs(sigIn)}` : ""} − зарцуулсан ${used} = ${expected}` : `Дохионы сум зарцуулсан: ${used}`} · ${gunExp != null ? `Ангийн: хүлээн авсан ${s.gunAmmoStart || 0}${gunIn ? ` ${gunIn < 0 ? "−" : "+"} дундуур ${Math.abs(gunIn)}` : ""} − зарцуулсан ${gunUsed} = ${gunExp}` : `Ангийн сум зарцуулсан: ${gunUsed}`}</div>
+        ${s.supplies?.length ? `<div class="small">Ээлжийн дунд авсан, өгсөн: ${esc(supplyTxt(s))}</div>` : ""}
         <div id="ammoWarn"></div></div>
       <div class="card"><p class="h">3. Машин</p>${chips("car", await Store.carList(), s.car, { fill: true, own: true, ownKeep: KEEP_CAR })}
         <div class="field"><span class="label">Гүйлт (км)</span><input type="number" inputmode="numeric" id="km" placeholder="Одометрийн заалт"></div>
@@ -598,15 +638,16 @@ Views.handover = async () => {
         <div class="field"><span class="label">Цэвэрхэн байдал</span>${chips("clean", CLEAN, "", { fill: true })}</div>
         <div class="field"><span class="label">Гэмтэл, тэмдэглэл</span><textarea id="dmg" placeholder="Байвал бичнэ"></textarea></div>
         <div class="photo" id="carph"></div></div>
-      <div class="card"><p class="h">4. Хүлээлгэн өгөх: ${esc(s.staff)}</p>
+      <div class="card"><p class="h">4. ${solo ? "Ээлж үлдээх" : "Хүлээлгэн өгөх"}: ${esc(s.staff)}</p>
         <div class="row"><div id="gself"></div><div class="grow small"><b>Сэлфи заавал.</b> Гарын үсэг заавал биш.</div></div>
         <details class="fold inner"><summary><span class="grow">Гарын үсэг <span class="small">(заавал биш)</span></span></summary><div class="foldbody"><div id="gsig"></div><button type="button" class="btn sm" id="gclr" style="justify-self:end">Арилгах</button></div></details></div>
-      <div class="card"><p class="h">5. Хүлээн авах</p><div id="recv">${staffPicker(staff.filter(x => x[0] !== s.staff), rcv, { mainLabel: "Хүлээн авах ажилтан", coLabel: "Хамт ажиллах" })}</div>
+      ${solo ? "" : `<div class="card"><p class="h">5. Хүлээн авах</p><div id="recv">${staffPicker(staff.filter(x => x[0] !== s.staff), rcv, { mainLabel: "Хүлээн авах ажилтан", coLabel: "Хамт ажиллах" })}</div>
         <div class="field"><span class="label">Шинэ ээлжийн хугацаа</span>${lenChips(24)}</div>
+        <p class="h" style="margin-top:6px">Шинэ ээлжийн сум</p>${ammoInHtml({ sig: expected ?? 0, gun: gunExp ?? 0 }, "Тоолсон үлдэгдэл")}
         <div class="row"><div id="rself"></div><div class="grow small">Хүлээн авах ажилтан <b>сэлфи заавал</b> авна.</div></div>
-        <details class="fold inner"><summary><span class="grow">Гарын үсэг <span class="small">(заавал биш)</span></span></summary><div class="foldbody"><div id="rsig"></div><button type="button" class="btn sm" id="rclr" style="justify-self:end">Арилгах</button></div></details></div>
-      <button class="btn p xl" id="done">Ээлж хүлээлгэх</button>
-      <div class="small" style="text-align:center">Хүлээлгэсний дараа ээлжийн өгөгдөл ZIP болж имэйлээр автоматаар явна.</div>`,
+        <details class="fold inner"><summary><span class="grow">Гарын үсэг <span class="small">(заавал биш)</span></span></summary><div class="foldbody"><div id="rsig"></div><button type="button" class="btn sm" id="rclr" style="justify-self:end">Арилгах</button></div></details></div>`}
+      <button class="btn p xl" id="done">${solo ? "Үлдээгээд ээлж дуусгах" : "Ээлж хүлээлгэх"}</button>
+      <div class="small" style="text-align:center">${solo ? "Дараагийн ажилтан шалгаж авсны дараа ээлжийн ZIP имэйлээр явна." : "Хүлээлгэсний дараа ээлжийн өгөгдөл ZIP болж имэйлээр автоматаар явна."}</div>`,
     mount(m) {
       $("#todo", m)?.addEventListener("click", () => App.go("todo"));
       const warn = () => {
@@ -616,7 +657,9 @@ Views.handover = async () => {
         if (g !== "" && gunExp != null && +g !== gunExp) w.push(`Ангийн сум таарахгүй: байх ёстой ${gunExp}, тоолсон ${+g}.`);
         $("#ammoWarn", m).innerHTML = w.length ? `<div class="banner crit"><b>!</b><span class="grow">${w.join(" ")}</span></div>` : "";
       };
-      $("#sig", m).oninput = warn; $("#gun", m).oninput = warn; warn();
+      const cnt = () => { const v = id => $(id, m).value; return { sig: v("#sig") === "" ? 0 : +v("#sig"), gun: v("#gun") === "" ? 0 : +v("#gun") }; };
+      const ammo = solo ? null : bindAmmoIn(m, cnt);
+      $("#sig", m).oninput = () => { warn(); ammo?.refresh(); }; $("#gun", m).oninput = () => { warn(); ammo?.refresh(); }; warn();
       $$("[data-eq]", m).forEach(x => x.onchange = () => {
         const k = x.dataset.eq; h.equipment[EQUIPMENT[k]] = x.checked;
         $(`[data-eqs="${k}"]`, m).textContent = x.checked ? "Бий" : "Байхгүй"; $(`[data-eqs="${k}"]`, m).classList.toggle("r3", !x.checked);
@@ -626,15 +669,11 @@ Views.handover = async () => {
         if (k === "car") { h.car.name = v; if (b?.dataset.keep) Store.addCar(v); } if (k === "fuel") h.car.fuel = v; if (k === "clean") h.car.clean = v; if (k === "len") h.len = +v;
         if (k.startsWith("chk")) { h.car.checks[CAR_CHECKS[+k.slice(3)]] = v; const nt = $(`[data-chkn="${k.slice(3)}"]`, m); nt.hidden = v !== "Гэмтэлтэй"; if (!nt.hidden) nt.focus(); }
       });
-      bindStaffPicker($("#recv", m), rcv);
-      const selfie = (box, who) => {
-        const draw = async () => { const u = h[who].selfie ? await Store.blobURL(h[who].selfie) : ""; box.innerHTML = u ? `<img class="selfie" src="${u}" alt="Сэлфи">` : `<button type="button" class="btn soft selfiebtn">${ICON.cam}<span>Сэлфи</span></button>`; $("button,img", box).onclick = async () => { const b = await pickPhoto("user", { gallery: false }); if (b) { h[who].selfie = await Store.putBlob(b, "Сэлфи"); draw(); } }; };
-        draw();
-      };
-      selfie($("#gself", m), "giver"); selfie($("#rself", m), "receiver");
+      if (!solo) bindStaffPicker($("#recv", m), rcv);
+      selfieField($("#gself", m), h.giver); if (!solo) selfieField($("#rself", m), h.receiver);
       let gp = null, rp = null; // гарын үсгийн талбарыг нээх үед л үүсгэнэ
       $("#gsig", m).closest("details").addEventListener("toggle", e => { if (e.target.open && !gp) { gp = SigPad($("#gsig", m)); $("#gclr", m).onclick = () => gp.clear(); } });
-      $("#rsig", m).closest("details").addEventListener("toggle", e => { if (e.target.open && !rp) { rp = SigPad($("#rsig", m)); $("#rclr", m).onclick = () => rp.clear(); } });
+      $("#rsig", m)?.closest("details").addEventListener("toggle", e => { if (e.target.open && !rp) { rp = SigPad($("#rsig", m)); $("#rclr", m).onclick = () => rp.clear(); } });
       const drawCar = async () => {
         const urls = await Promise.all(h.car.photos.map(id => Store.blobURL(id)));
         $("#carph", m).innerHTML = urls.map(u => `<img src="${u}" alt="">`).join("") + `<button type="button" class="btn sm soft" id="addc" style="height:84px">${ICON.cam} Гэмтлийн зураг</button>`;
@@ -649,22 +688,81 @@ Views.handover = async () => {
         CAR_CHECKS.forEach((c, k) => { if (h.car.checks[c] === "Гэмтэлтэй") h.car.checkNotes[c] = $(`[data-chkn="${k}"]`, m).value.trim(); });
         h.receiver.name = rcv.staff || ""; h.receiver.pos = rcv.pos; h.receiver.coworkers = rcv.coworkers;
         const miss = [];
-        if (!h.receiver.name) miss.push("хүлээн авах ажилтан");
-        if (!h.giver.selfie) miss.push("өгөх ажилтны сэлфи");
-        if (!h.receiver.selfie) miss.push("авах ажилтны сэлфи");
+        if (!solo && !h.receiver.name) miss.push("хүлээн авах ажилтан");
+        if (!h.giver.selfie) miss.push(solo ? "сэлфи" : "өгөх ажилтны сэлфи");
+        if (!solo && !h.receiver.selfie) miss.push("авах ажилтны сэлфи");
         if (!h.car.km) miss.push("машины гүйлт");
-        if (!(h.len > 0)) miss.push("ээлжийн хугацаа");
+        if (!solo && !(h.len > 0)) miss.push("ээлжийн хугацаа");
         const noNote = EQUIPMENT.filter(e => !h.equipment[e] && !h.equipNotes[e]);
         if (noNote.length) miss.push("тайлбар (" + noNote.join(", ") + ")");
         if (miss.length) { toast("Дутуу: " + miss.join(", "), 4000); return; }
+        if (solo) {
+          if (!await confirmBox(`Хүлээлцэхгүйгээр ээлжээ дуусгаж, зүйлсээ үлдээх үү?<br><span class="small">Дараагийн ажилтан «Ээлж авах» дарж шалгаж авна.</span>`)) return;
+          if (gp && !gp.isEmpty()) h.giver.sign = await Store.putBlob(await gp.blob(), "Гарын үсэг");
+          h.at = Date.now(); h.solo = true;
+          await Store.closeShift(h, { solo: true });
+          toast("Ээлж дууслаа. Зүйлс үлдээгдлээ.", 3500); App.go("home", {}, { reset: true }); return;
+        }
         if (!await confirmBox(`<b>${esc(s.staff)}</b> → <b>${esc(h.receiver.name)}</b><br>Ээлж хүлээлгэх үү?`)) return;
         if (gp && !gp.isEmpty()) h.giver.sign = await Store.putBlob(await gp.blob(), "Гарын үсэг");
         if (rp && !rp.isEmpty()) h.receiver.sign = await Store.putBlob(await rp.blob(), "Гарын үсэг");
         h.at = Date.now();
+        const a = ammo.get(); h.ammoAdj = { sigAdj: a.sigAdj, gunAdj: a.gunAdj, note: a.note };
         const old = await Store.closeShift(h);
-        await Store.startShift({ staff: h.receiver.name, pos: h.receiver.pos, coworkers: rcv.coworkers, len: h.len, car: h.car.name, sigAmmo: h.sigAmmo, gunAmmo: h.gunAmmo, from: old.id });
+        await Store.startShift({ staff: h.receiver.name, pos: h.receiver.pos, coworkers: rcv.coworkers, len: h.len, car: h.car.name, sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a, from: old.id });
         toast(`Ээлж хүлээлгэлээ. ${h.receiver.name}-ийн ээлж эхэллээ.`, 3500);
         App.go("home", {}, { reset: true });
+      };
+    }
+  };
+};
+
+/* Хүлээлцэлгүй үлдээсэн ээлжийг шалгаж авах */
+Views.takeover = async () => {
+  const old = await Store.pendingShift();
+  if (!old || Store.shift) { setTimeout(() => App.go("home", {}, { reset: true })); return { title: "", html: "" }; }
+  const h = old.handover, staff = await Store.staffList(), rcv = { staff: null, pos: "", coworkers: [] }, me = { selfie: null }, st = { len: 24 };
+  const items = [
+    ...EQUIPMENT.map(e => `${e}: ${h.equipment?.[e] === false ? "Байхгүй" + (h.equipNotes?.[e] ? " (" + h.equipNotes[e] + ")" : "") : "Бий"}`),
+    `Дохионы бууны сум: ${h.sigAmmo ?? 0}`, `Ангийн бууны сум: ${h.gunAmmo ?? 0}`,
+    `Машин: ${h.car?.name || ""} · ${h.car?.km || "—"} км · түлш ${h.car?.fuel || "—"} · ${h.car?.clean || "—"}`,
+    ...CAR_CHECKS.map(c => `${c}: ${h.car?.checks?.[c] || ""}${h.car?.checkNotes?.[c] ? " (" + h.car.checkNotes[c] + ")" : ""}`),
+    ...(h.car?.damage ? [`Гэмтэл, тэмдэглэл: ${h.car.damage}`] : [])];
+  const gs = h.giver?.selfie ? await Store.blobURL(h.giver.selfie) : "";
+  return {
+    title: "Ээлж авах", tab: "home",
+    html: `<div class="card hero"><div class="row">${gs ? `<img class="selfie" src="${gs}" alt="">` : ""}<div class="grow"><div class="title" style="font-size:19px">${esc(old.staff)}-ээс ээлж авч байна</div>
+        <div class="sub">${fmtDT(h.at)}-д үлдээсэн. Үлдээсэн зүйлсийг шалгаад авна уу.</div></div></div></div>
+      <div class="card"><div class="row between"><p class="h">1. Үлдээсэн зүйлс</p><button type="button" class="btn sm soft" id="all">Бүгдийг шалгасан</button></div>
+        ${items.map((t, k) => `<label class="check tk"><span>${esc(t)}</span><input type="checkbox" class="toggle" data-ck="${k}"></label>`).join("")}
+        <div class="field"><span class="label">Зөрүү, тайлбар (заавал биш)</span><textarea id="cnote" placeholder="Тоо таарахгүй, дутуу зүйл байвал бичнэ"></textarea></div></div>
+      <div class="card"><p class="h">2. Хүлээн авах ажилтан</p><div id="recv">${staffPicker(staff.filter(x => x[0] !== old.staff), rcv, { mainLabel: "Хүлээн авах ажилтан", coLabel: "Хамт ажиллах" })}</div>
+        <div class="field"><span class="label">Ээлжийн хугацаа</span>${lenChips(24)}</div></div>
+      <div class="card"><p class="h">3. Хүлээн авсан сум</p>${ammoInHtml({ sig: h.sigAmmo ?? 0, gun: h.gunAmmo ?? 0 })}</div>
+      <div class="card"><p class="h">4. Сэлфи</p><div class="row"><div id="rself"></div><div class="grow small"><b>Сэлфи заавал.</b> Гарын үсэг заавал биш.</div></div>
+        <details class="fold inner"><summary><span class="grow">Гарын үсэг <span class="small">(заавал биш)</span></span></summary><div class="foldbody"><div id="rsig"></div><button type="button" class="btn sm" id="rclr" style="justify-self:end">Арилгах</button></div></details></div>
+      <button class="btn p xl" id="done">Ээлж авах</button>`,
+    mount(m) {
+      bindStaffPicker($("#recv", m), rcv);
+      bindChips(m, (k, v) => { if (k === "len") st.len = +v; });
+      const ammo = bindAmmoIn(m, () => ({ sig: h.sigAmmo ?? 0, gun: h.gunAmmo ?? 0 }));
+      selfieField($("#rself", m), me);
+      let rp = null;
+      $("#rsig", m).closest("details").addEventListener("toggle", e => { if (e.target.open && !rp) { rp = SigPad($("#rsig", m)); $("#rclr", m).onclick = () => rp.clear(); } });
+      $("#all", m).onclick = () => $$("[data-ck]", m).forEach(x => x.checked = true);
+      $("#done", m).onclick = async () => {
+        const left = $$("[data-ck]", m).filter(x => !x.checked).length, miss = [];
+        if (left) miss.push(`${left} зүйл шалгаагүй`);
+        if (!rcv.staff) miss.push("хүлээн авах ажилтан");
+        if (!me.selfie) miss.push("сэлфи");
+        if (!(st.len > 0)) miss.push("ээлжийн хугацаа");
+        if (miss.length) { toast("Дутуу: " + miss.join(", "), 4000); return; }
+        if (!await confirmBox(`<b>${esc(old.staff)}</b> → <b>${esc(rcv.staff)}</b><br>Ээлжийг шалгаж авах уу?`)) return;
+        const a = ammo.get(), sign = rp && !rp.isEmpty() ? await Store.putBlob(await rp.blob(), "Гарын үсэг") : null;
+        h.ammoAdj = { sigAdj: a.sigAdj, gunAdj: a.gunAdj, note: a.note };
+        await Store.takeOver(old, { name: rcv.staff, pos: rcv.pos, coworkers: rcv.coworkers, selfie: me.selfie, sign }, { items: items.length, note: $("#cnote", m).value.trim() });
+        await Store.startShift({ staff: rcv.staff, pos: rcv.pos, coworkers: rcv.coworkers, len: st.len, car: h.car?.name || CARS[0], sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a, from: old.id });
+        toast(`${rcv.staff}-ийн ээлж эхэллээ.`, 3500); App.go("home", {}, { reset: true });
       };
     }
   };
@@ -692,14 +790,17 @@ Views.report = async () => {
         <div class="dates"><div class="field"><span class="label">Эхлэх</span><input type="date" id="f" value="${isoDay(RState.from)}"></div><div class="field"><span class="label">Дуусах</span><input type="date" id="t" value="${isoDay(RState.to - 1)}"></div></div>
         <div class="field"><span class="label">Ажилтан</span><select id="who"><option value="">Бүгд</option>${staff.map(s => `<option ${s[0] === RState.who ? "selected" : ""}>${esc(s[0])}</option>`).join("")}</select></div></div>
       <div class="card"><p class="h">${esc(Report.title(R).replace("Nubia Bird тайлан ", ""))}</p>
-        <div class="stats"><div class="stat"><b>${R.shifts.length}</b><span>Ээлж</span></div><div class="stat"><b>${k.insp}</b><span>Үзлэг${k.extra ? ` (ээлжийн бус ${k.extra})` : ""}</span></div><div class="stat"><b>${k.obs}</b><span>Ажиглалт</span></div>
-        <div class="stat"><b>${k.disp}</b><span>Үргээлэг</span></div><div class="stat"><b>${k.ind}</b><span>Бодгаль</span></div><div class="stat"><b>${k.success == null ? "—" : k.success + "%"}</b><span>Үргээлгийн амжилт</span></div>
+        <div class="stats"><div class="stat"><b>${R.shifts.length}</b><span>Ээлж</span></div><div class="stat"><b>${k.insp}</b><span>Үзлэг${k.extra ? ` (ээлжийн бус ${k.extra})` : ""}</span></div><div class="stat"><b>${k.species}</b><span>Зүйл</span></div>
+        <div class="stat"><b>${k.ind}</b><span>Бодгаль</span></div><div class="stat"><b>${k.obs}</b><span>Давтамж</span></div><div class="stat"><b>${k.disp}</b><span>Үргээлэг</span></div>
+        <div class="stat"><b>${k.success == null ? "—" : k.success + "%"}</b><span>Үргээлгийн амжилт</span></div>
         <div class="stat"><b>${k.gun}</b><span>Ангийн сум</span></div><div class="stat"><b>${k.sig}</b><span>Дохионы сум</span></div><div class="stat"><b>${k.km}</b><span>Явсан км</span></div></div>
+        ${R.flock.freq ? `<div class="flock"><span>Сүрэг (нэг бүртгэлд)</span><b>дундаж ${R.flock.avg}</b><b>min ${R.flock.min}</b><b>max ${R.flock.max}</b></div>` : ""}
         ${k.todo ? `<div class="banner warn"><b>${k.todo}</b><span class="grow">ажиглалт дутуу байна</span></div>` : ""}</div>
       ${k.obs ? `
       <div class="card"><p class="h">Маршрут бүрээр (үзлэг)</p><div class="bars">${ROUTE_IDS.map(r => `<div class="bar"><span>${esc(routeName(r))}</span><i style="width:${R.routes[r] / rmax * 100}%"></i><b>${R.routes[r]}</b></div>`).join("")}</div></div>
-      <div class="card"><p class="h">Хамгийн их тохиолдсон зүйл</p><div class="bars">${R.top.map(([s, n], i) => `<div class="bar"${i >= 5 ? " hidden data-moresp" : ""}><span><span class="r${riskOf(s)}">●</span> ${esc(s)}</span><i style="width:${n / mx * 100}%"></i><b>${n}</b></div>`).join("")}</div>
-        ${R.top.length > 5 ? `<button type="button" class="btn sm soft" id="moresp">Бусад ${R.top.length - 5} зүйл</button>` : ""}</div>
+      <div class="card"><p class="h">Зүйл бүрээр</p><div class="tblwrap"><table class="sptbl"><thead><tr><th>Зүйл</th><th>Давтамж</th><th>Бодгаль</th><th>Дундаж</th><th>Min</th><th>Max</th></tr></thead><tbody>
+        ${R.spStats.map((x, i) => `<tr${i >= 8 ? " hidden data-moresp" : ""}><td><span class="r${riskOf(x.sp)}">●</span> ${esc(x.sp)}</td><td>${x.freq}</td><td><b>${x.ind}</b></td><td>${x.avg}</td><td>${x.min}</td><td>${x.max}</td></tr>`).join("")}</tbody></table></div>
+        ${R.spStats.length > 8 ? `<button type="button" class="btn sm soft" id="moresp">Бусад ${R.spStats.length - 8} зүйл</button>` : ""}</div>
       ${R.newSp.length ? `<div class="card"><p class="h">Шинэ зүйл (${R.newSp.length})</p><div class="list">${R.newSp.slice().reverse().map(obsItem).join("")}</div></div>` : ""}
       ${[[3, R.risk3], [2, R.risk2]].map(([lv, L]) => `<div class="card"><p class="h">Эрсдэлийн ${lv === 3 ? "III" : "II"} түвшний ажиглагдсан шувууд</p>
         ${L.length ? L.map(x => `<details class="fold inner"><summary><span class="grow"><span class="r${lv}">●</span> ${esc(x.sp)}</span><span class="small">${x.ind} бодгаль · ${x.obs.length} ажиглалт</span></summary><div class="foldbody"><div class="list">${x.obs.slice().reverse().map(o => obsItem(o).replace('<span class="s">', `<span class="s">${fmtDate(o.t)} · `)).join("")}</div></div></details>`).join("") : `<div class="small">Ажиглагдаагүй</div>`}</div>`).join("")}

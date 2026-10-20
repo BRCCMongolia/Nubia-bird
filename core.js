@@ -81,6 +81,11 @@ const Geo = (() => {
       if (c < 1 || c > GRID.cols || r < 0 || r >= GRID.rows.length) return "Гадна";
       return GRID.rows[r] + c;
     },
+    // Торноос гадуурх цэгт хамгийн ойрын нүд
+    near([x, y]) {
+      const c = Math.min(GRID.cols, Math.max(1, Math.floor((x - GRID.x0) / GRID.cw) + 1)), r = Math.min(GRID.rows.length - 1, Math.max(0, Math.floor((y - GRID.y0) / GRID.ch)));
+      return GRID.rows[r] + c;
+    },
     cellOfLL(ll) { return this.cell(this.llToPx(ll)); },
     dist(a, b) { // метр, haversine
       const R = 6371000, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;

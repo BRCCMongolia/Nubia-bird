@@ -1,10 +1,10 @@
 // Nubia Bird: офлайн ажиллуулах service worker. Шинэ хувилбар гаргахад VERSION-ийг өөрчилнө.
-const VERSION = "nubia-1.3.1";
+const VERSION = "nubia-1.4.0";
 const SHELL = ["./", "index.html", "styles.css", "manifest.webmanifest",
   "species.js", "data.js", "core.js", "store.js", "map.js", "ui.js", "export.js", "app.js",
   "lib/leaflet.js", "lib/leaflet.css",
   "fonts/golos-text-cyrillic-wght-normal.woff2", "fonts/golos-text-cyrillic-ext-wght-normal.woff2", "fonts/golos-text-latin-wght-normal.woff2",
-  "img/grid.jpg", "img/nubia.png", "img/brcc.jpg", "img/gombobaatar.jpg",
+  "img/grid.jpg", "img/nubia.png", "img/brcc.jpg", "img/gombobaatar.jpg", "img/arrow.png", "img/dot.png",
   "img/m1.jpg", "img/m2.jpg", "img/m3.jpg", "img/m4.jpg", "img/m5.jpg",
   "img/m1-s.jpg", "img/m2-s.jpg", "img/m3-s.jpg", "img/m4-s.jpg", "img/m5-s.jpg",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-180.png"];

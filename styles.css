@@ -130,7 +130,8 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .map{position:relative;isolation:isolate;border-radius:14px;overflow:hidden;border:1px solid var(--line);background:#fff;touch-action:manipulation}
 .map svg{display:block;width:100%;height:auto;cursor:crosshair}
 .map .leaf{height:340px}
-.maptools{position:absolute;top:8px;right:8px;display:flex;gap:6px;z-index:1001}
+.maptools{position:absolute;top:8px;right:8px;left:8px;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;z-index:1001;pointer-events:none}
+.maptools button{pointer-events:auto}
 .maptools button{background:rgba(255,255,255,.95);color:#1d2733;border:1px solid #c9cec6;border-radius:10px;padding:7px 10px;font-size:13px;font-weight:650;cursor:pointer}
 .maptools button[aria-pressed="true"]{background:#1f4e9c;color:#fff;border-color:#1f4e9c}
 .seq{font-family:var(--mono);font-size:14px;overflow-wrap:anywhere}
@@ -314,3 +315,37 @@ input.eqnote{border-color:var(--crit)}
 .spsel .banner{flex-wrap:wrap}
 .spsel .banner .grow{min-width:58%}
 .chips.fill .chip{white-space:nowrap;padding:10px 8px}
+/* Зураг бүтэн дэлгэцээр */
+.imgview{position:fixed;inset:0;z-index:46;background:#0b0f14;color:#fff;display:flex;flex-direction:column;padding:calc(var(--safe-t) + 8px) 0 calc(8px + var(--safe-b))}
+.ivhead{display:flex;align-items:center;gap:8px;padding:0 max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px));min-width:0}
+.ivhead b{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ivhead .btn{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.25)}
+.ivhead .btn[aria-pressed="true"]{background:#1f4e9c;border-color:#1f4e9c}
+.ivstage{position:relative;flex:1;min-height:0;overflow:hidden;touch-action:none}
+.ivstage img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-select:none;background:#fff}
+.ivhint{text-align:center;font-size:12px;color:rgba(255,255,255,.6);padding-top:6px}
+.btn.xbtn{min-width:52px;min-height:48px;font-size:22px;font-weight:700;padding:0 14px}
+.item .s{overflow-wrap:anywhere;min-width:0}
+.zoombtn{display:block;width:100%;padding:0;border:0;background:none;cursor:zoom-in}
+/* Тайлан: сүрэг, зүйл бүрээр */
+.flock{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;background:var(--surface-2);border-radius:12px;padding:10px 12px;font-size:14px}
+.flock span{color:var(--muted);flex-basis:100%;font-size:12px}
+.flock b{font-variant-numeric:tabular-nums}
+.tblwrap{overflow-x:auto;margin:0 -4px}
+.sptbl{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.sptbl th{font-size:11px;font-weight:650;color:var(--muted);text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+.sptbl td{text-align:right;padding:7px 6px;border-bottom:1px solid var(--line)}
+.sptbl th:first-child,.sptbl td:first-child{text-align:left}
+.sptbl td:first-child{min-width:120px}
+/* Сум хүлээн авах */
+.ammoin{display:grid;gap:10px}
+.ammorow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:12px;padding:10px 12px}
+.ammorow .grow{min-width:140px}
+.ammorow input{width:76px;flex:none}
+.ammorow .pm{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ammorow .pm button{width:40px;height:42px;border:0;background:var(--surface);color:var(--fg);font-size:20px;font-weight:700;cursor:pointer}
+.ammorow .pm button[aria-pressed="true"]{background:var(--brand);color:#fff}
+.ammorow .tot{font-size:15px;white-space:nowrap}
+.ammorow .tot b{font-size:20px}
+.btn.solo{justify-self:center;font-size:13px;min-height:36px;color:var(--muted)}
+label.check.tk{padding:10px 0;border-bottom:1px solid var(--line)}

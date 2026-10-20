@@ -30,24 +30,44 @@ const Store = {
   },
 
   /* ----- Ээлж ----- */
-  async startShift({ staff, pos, coworkers, len, car, sigAmmo, gunAmmo, from }) {
-    const s = { id: uid(), staff, pos, coworkers: coworkers || [], len, car, start: Date.now(), end: null, sigAmmoStart: sigAmmo ?? null,
-      gunAmmoStart: gunAmmo ?? null, from: from || null, handover: null, supplies: [] };
+  async startShift({ staff, pos, coworkers, len, car, sigAmmo, gunAmmo, ammoIn, from }) {
+    const s = { id: uid(), staff, pos, coworkers: coworkers || [], len, car, start: Date.now(), end: null, sigAmmoStart: sigAmmo ?? 0,
+      gunAmmoStart: gunAmmo ?? 0, ammoIn: ammoIn || null, from: from || null, handover: null, supplies: [] };
     await DB.put("shifts", s); await DB.setMeta("currentShift", s.id);
     this.shift = s; await this.queue({ op: "upsert", table: "shifts", id: s.id });
     return s;
   },
-  async closeShift(handover) {
+  /* solo: хүлээн авагчгүй дуусгаж, бүх зүйлийг үлдээнэ. Дараагийн ажилтан "Ээлж авах"-аар шалгаж авна. */
+  async closeShift(handover, { solo = false } = {}) {
     const s = this.shift; if (!s) return;
-    s.end = Date.now(); s.handover = handover;
+    s.end = Date.now(); s.handover = handover; handover.pending = solo;
     await DB.put("shifts", s); await DB.setMeta("currentShift", null);
+    if (solo) await DB.setMeta("pendingShift", s.id);
+    await this.nameHandover(handover, handover.at || s.end);
     for (const b of [handover.giver?.selfie, handover.giver?.sign, handover.receiver?.selfie, handover.receiver?.sign, ...(handover.car?.photos || [])])
       if (b) await this.queue({ op: "file", id: b });
+    if ((await DB.all("obs")).some(o => o.shiftId === s.id && o.pts.length)) await this.queue({ op: "shiftpath", id: s.id });
     await this.queue({ op: "upsert", table: "shifts", id: s.id });
     await this.queue({ op: "upsert", table: "handover", id: s.id });
-    if (this.settings.autoMail) await this.queue({ op: "mail", kind: "shift", id: s.id });
+    if (!solo && this.settings.autoMail) await this.queue({ op: "mail", kind: "shift", id: s.id });
     this.shift = null;
     return s;
+  },
+  async pendingShift() { const id = await DB.meta("pendingShift", null); return id ? await DB.get("shifts", id) : null; },
+  /* Үлдээсэн ээлжийг шалгаж авах */
+  async takeOver(old, receiver, check) {
+    const h = old.handover; h.receiver = receiver; h.check = check; h.pending = false; h.takenAt = Date.now();
+    await DB.put("shifts", old); await DB.setMeta("pendingShift", null);
+    await this.nameHandover({ receiver }, h.takenAt);
+    for (const b of [receiver.selfie, receiver.sign]) if (b) await this.queue({ op: "file", id: b });
+    await this.queue({ op: "upsert", table: "shifts", id: old.id });
+    await this.queue({ op: "upsert", table: "handover", id: old.id });
+    if (this.settings.autoMail) await this.queue({ op: "mail", kind: "shift", id: old.id });
+  },
+  /* Сүүлд дууссан ээлжийн тоолсон үлдэгдэл сум (байхгүй бол 0) */
+  async lastAmmo() {
+    const last = (await DB.all("shifts")).filter(x => x.end && x.handover).sort((a, b) => b.end - a.end)[0];
+    return { sig: last?.handover?.sigAmmo ?? 0, gun: last?.handover?.gunAmmo ?? 0 };
   },
   /* Ээлжийн дунд буу, сум авсан */
   async addSupply(item, n, note) {
@@ -98,7 +118,8 @@ const Store = {
     if (sig !== o.pathSig) { o.pathSig = sig; o.pathUrl = ""; }
     else if (!o.pathUrl) o.pathUrl = (await DB.get("obs", o.id))?.pathUrl || ""; // маягт нээлттэй байхад илгээгдсэн бол
     await DB.put("obs", o);
-    for (const b of o.photos) await this.queue({ op: "file", id: b });
+    const cell = o.pts.length ? pathCells([o.pts[0]])[0].replace(/ \(.*/, "") : o.lat ? Geo.cellOfLL([o.lat, o.lon]) : "";
+    for (const b of o.photos) { await this.nameBlob(b, ["Зураг", stamp(o.t), o.sp || "Зүйл тодорхойгүй", cell]); await this.queue({ op: "file", id: b }); }
     if (o.pts.length && !o.pathUrl) await this.queue({ op: "path", id: o.id });
     await this.queue({ op: "upsert", table: "obs", id: o.id });
     await this.bumpUsage(o.sp);
@@ -109,6 +130,26 @@ const Store = {
   async obsOf(filter) { return (await DB.all("obs")).filter(filter).sort((a, b) => a.t - b.t); },
 
   /* ----- Зураг, гарын үсэг ----- */
+  /* Файлын ойлгомжтой нэр: Сэлфи_2026.10.20_08-30_Б.Нүүдэл_Хүлээлгэсэн.jpg. Давхцвал _2, _3 */
+  async uniqueName(base, ext) {
+    const used = await DB.meta("fileNames", {}); let n = fileSafe(base), k = 1;
+    while (used[`${n}${k > 1 ? "_" + k : ""}.${ext}`]) k++;
+    const name = `${n}${k > 1 ? "_" + k : ""}.${ext}`; used[name] = 1; await DB.setMeta("fileNames", used); return name;
+  },
+  async nameBlob(id, parts) {
+    const b = id && await DB.get("blobs", id); if (!b || b.url) return;
+    const base = parts.filter(Boolean).join("_"); if (b.name && b.name.startsWith(fileSafe(base))) return;
+    b.name = await this.uniqueName(base, (b.type || "").includes("png") ? "png" : "jpg"); await DB.put("blobs", b);
+  },
+  /* Хүлээлцэхэд сэлфи, гарын үсэг, машины зурагт нэр өгнө */
+  async nameHandover(h, t) {
+    const at = stamp(t);
+    for (const [who, role] of [["giver", "Хүлээлгэсэн"], ["receiver", "Хүлээн авсан"]]) {
+      const x = h[who]; if (!x?.name) continue;
+      await this.nameBlob(x.selfie, ["Сэлфи", at, x.name, role]); await this.nameBlob(x.sign, ["Гарын үсэг", at, x.name, role]);
+    }
+    for (const id of h.car?.photos || []) await this.nameBlob(id, ["Машины зураг", at, h.car.name]);
+  },
   async putBlob(blob, kind) { const b = { id: uid(), blob, kind, type: blob.type, t: Date.now(), url: null }; await DB.put("blobs", b); return b.id; },
   async blobURL(id) { const b = await DB.get("blobs", id); return b ? URL.createObjectURL(b.blob) : ""; },
 
@@ -131,8 +172,23 @@ const kindName = x => x.shiftId ? "Ээлжийн" : "Ээлжийн бус";
 const asList = v => Array.isArray(v) ? v : v ? [v] : [];
 const listTxt = v => asList(v).join(", ");
 const hasArga = (o, a) => asList(o.arga).includes(a);
+/* Нислэгийн замын нүдүүд: дараалсан ижил нүдийг нэгтгэж, гадна цэгт ойрын нүдийг заана. max-аас урт бол "…" */
+const pathCells = pts => {
+  const L = [];
+  for (const p of pts) { const c = Geo.cell(p), t = c === "Гадна" ? `Гадна (${Geo.near(p)} орчим)` : c; if (L[L.length - 1] !== t) L.push(t); }
+  return L;
+};
+const pathTxt = (pts, max = 0, sep = " → ") => { const L = pathCells(pts); return max && L.length > max ? L.slice(0, max).join(sep) + sep + "…" : L.join(sep); };
+const fileSafe = t => String(t).replace(/[\\/:*?"<>|#%]+/g, "-").replace(/\s+/g, " ").trim();
+const stamp = t => `${fmtDate(t)}_${fmtTime(t).replace(":", "-")}`;
 const supplyN = (s, item) => sum((s.supplies || []).filter(x => x.item === item), x => +x.n || 0);
-const supplyTxt = s => (s.supplies || []).map(x => `${fmtTime(x.t)} ${x.item}${x.item === "Ангийн буу" ? "" : " " + x.n}${x.note ? " (" + x.note + ")" : ""}`).join("; ");
+const supplyTxt = s => (s.supplies || []).map(x => `${fmtTime(x.t)} ${x.item}${x.item === "Ангийн буу" ? "" : " " + (x.n < 0 ? "−" + -x.n : "+" + x.n)}${x.note ? " (" + x.note + ")" : ""}`).join("; ");
+/* Ээлжийн эхэнд хүлээн авсан сум: өмнөх ээлжээс үлдсэн + нэмсэн/хассан */
+const ammoInTxt = s => {
+  const a = s.ammoIn; if (!a) return s.sigAmmoStart != null || s.gunAmmoStart != null ? `Дохионы ${s.sigAmmoStart ?? 0}, Ангийн ${s.gunAmmoStart ?? 0}` : "";
+  const one = (lbl, prev, adj) => `${lbl} ${prev + adj}${adj ? ` (үлдсэн ${prev} ${adj > 0 ? "+" : "−"} ${Math.abs(adj)})` : ""}`;
+  return [one("Дохионы", a.sigPrev, a.sigAdj), one("Ангийн", a.gunPrev, a.gunAdj)].join(", ") + (a.note ? ` · ${a.note}` : "");
+};
 const captionTxt = o => o.photos.map((id, k) => o.photoNotes?.[id] ? `${k + 1}: ${o.photoNotes[id]}` : "").filter(Boolean).join("; ");
 const people = x => [x.staff || x.observer, ...(x.coworkers || [])].filter(Boolean);
 
@@ -144,10 +200,13 @@ const Rows = {
     return {
       "ID": s.id, "Огноо": fmtDate(s.start), "Ажилтан": s.staff, "Албан тушаал": s.pos, "Хамт ажилласан": (s.coworkers || []).join(", "),
       "Эхэлсэн": fmtDT(s.start), "Дууссан": s.end ? fmtDT(s.end) : "", "Хугацаа (цаг)": s.len, "Машин": s.car,
-      "Үзлэг": insps.length, "Үргээлэг": obs.filter(o => hasArga(o, "Үргээлэг")).length, "Ажиглалт": obs.length,
+      "Үзлэг": insps.length, "Зүйл": new Set(obs.filter(o => o.sp).map(o => o.sp)).size, "Бодгаль": sum(obs, o => +o.n || 0),
+      "Давтамж": obs.length, "Үргээлэг": obs.filter(o => hasArga(o, "Үргээлэг")).length,
+      "Хүлээн авсан сум": ammoInTxt(s),
       "Ангийн бууны сум": sum(obs, o => +o.ammoGun || 0), "Дохионы бууны сум": sum(obs, o => +o.ammoSig || 0),
       "Дундуур авсан буу, сум": supplyTxt(s),
-      "Хүлээн авсан": s.handover?.receiver?.name || "", "Төлөв": s.end ? "Дууссан" : "Явагдаж буй"
+      "Нислэгийн зам (KMZ)": s.pathUrl || "",
+      "Хүлээн авсан": s.handover?.receiver?.name || "", "Төлөв": !s.end ? "Явагдаж буй" : s.handover?.pending ? "Хүлээлцээгүй, үлдээсэн" : s.handover?.solo ? "Үлдээсэн, шалгаж авсан" : "Дууссан"
     };
   },
   async insps(i) {
@@ -168,24 +227,26 @@ const Rows = {
       "Ажигласан": o.observer, "Хамт ажилласан": (o.coworkers || []).join(", "), "Үзлэгийн төрөл": kindName(o), "Маршрут": routeName(o.route), "Юу хийсэн": listTxt(o.arga), "Ангилал": o.type,
       "Зүйл": o.sp, "Латин нэр": latinOf(o.sp), "Шинэ зүйл": isNewSp(o) ? "Тийм" : "",
       "Эрсдэл": RISK_LABEL[riskOf(o.sp)], "Тоо": +o.n || 0, "Зан төрх": listTxt(o.beh),
-      "Нислэгийн зам (тор)": o.pts.map(p => Geo.cell(p)).join(" → "), "Нислэгийн зам (KMZ)": o.pathUrl || "", "Байршил": o.loc,
-      "Өргөрөг": o.lat ?? "", "Уртраг": o.lon ?? "", "Багаж": o.tools.join(", "),
+      "Нислэгийн зам (тор)": pathTxt(o.pts), "Нислэгийн зам (KMZ)": o.pathUrl || "", "Байршил": o.loc,
+      "Ажиглагчийн өргөрөг": o.lat ?? "", "Ажиглагчийн уртраг": o.lon ?? "", "Багаж": o.tools.join(", "),
       "Ангийн бууны сум": +o.ammoGun || 0, "Дохионы бууны сум": +o.ammoSig || 0, "Авсан арга хэмжээ": o.acts.join(", "),
       "Үр дүн": o.res, "Тэмдэглэл": o.note, "Зураг": photos.join(" "), "Зургийн тайлбар": captionTxt(o), "Төлөв": o.done ? "Бүрэн" : "Дутуу"
     };
   },
   async handover(s) {
     const h = s.handover || {}, link = async id => id ? ((await DB.get("blobs", id))?.url || "") : "";
-    const r = { "ID": s.id, "Огноо цаг": h.at ? fmtDT(h.at) : "", "Хүлээлгэн өгсөн": h.giver?.name || "", "Хүлээн авсан": h.receiver?.name || "",
-      "Хүлээн авсан албан тушаал": h.receiver?.pos || "" };
+    const r = { "ID": s.id, "Огноо цаг": h.at ? fmtDT(h.at) : "", "Хүлээлцсэн хэлбэр": h.solo ? "Үлдээгээд дуусгасан" : "Биечлэн", "Хүлээлгэн өгсөн": h.giver?.name || "", "Хүлээн авсан": h.receiver?.name || "",
+      "Хүлээн авсан албан тушаал": h.receiver?.pos || "", "Хүлээн авсан цаг": h.solo && h.takenAt ? fmtDT(h.takenAt) : "" };
     EQUIPMENT.forEach(e => r[e] = h.equipment?.[e] === false ? "Байхгүй" + (h.equipNotes?.[e] ? ": " + h.equipNotes[e] : "") : h.equipment?.[e] ? "Бий" : "");
     Object.assign(r, { "Дохионы сум (тоолсон)": h.sigAmmo ?? "", "Дохионы сум (байх ёстой)": h.sigExpected ?? "",
       "Ангийн сум (тоолсон)": h.gunAmmo ?? "", "Ангийн сум (байх ёстой)": h.gunExpected ?? "",
+      "Сум нэмсэн/хассан": h.ammoAdj ? `Дохионы ${h.ammoAdj.sigAdj}, Ангийн ${h.ammoAdj.gunAdj}${h.ammoAdj.note ? " · " + h.ammoAdj.note : ""}` : "",
       "Машин": h.car?.name || "", "Гүйлт (км)": h.car?.km ?? "", "Түлш": h.car?.fuel || "" });
     CAR_CHECKS.forEach(c => r[c] = (h.car?.checks?.[c] || "") + (h.car?.checkNotes?.[c] ? ": " + h.car.checkNotes[c] : ""));
     Object.assign(r, { "Цэвэрхэн байдал": h.car?.clean || "", "Гэмтэл, тэмдэглэл": h.car?.damage || "" });
     r["Гэмтлийн зураг"] = (await Promise.all((h.car?.photos || []).map(link))).join(" ");
     r["Өгсөн: сэлфи"] = await link(h.giver?.selfie); r["Өгсөн: гарын үсэг"] = await link(h.giver?.sign);
+    r["Шалгаж авсан тэмдэглэл"] = h.check?.note || "";
     r["Авсан: сэлфи"] = await link(h.receiver?.selfie); r["Авсан: гарын үсэг"] = await link(h.receiver?.sign);
     return r;
   }
@@ -197,18 +258,36 @@ function trackKml(i) {
   return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(routeName(i.route))} ${fmtDT(i.start)} ${esc(i.staff)}</name><Style id="r"><LineStyle><color>ff2e32b8</color><width>4</width></LineStyle></Style><Placemark><name>${esc(routeName(i.route))} · ${i.km} км</name><styleUrl>#r</styleUrl><LineString><tessellate>1</tessellate><coordinates>${coords}</coordinates></LineString></Placemark></Document></kml>`;
 }
 
-/* Шувууны нислэгийн зам: ажиглалт бүр нэг шугам, эрсдэлийн түвшнээр өнгөтэй (KML өнгө aabbggrr) */
+/* Шувууны нислэгийн зам: ажиглалт бүр нэг шугам, эрсдэлийн түвшнээр өнгөтэй (KML өнгө aabbggrr).
+   Хэсэг бүрийн дунд нислэгийн чиглэлийг заасан сум, эхлэх цэгт дугуй тэмдэг. */
+const bearing = ([la1, lo1], [la2, lo2]) => {
+  const r = Math.PI / 180, y = Math.sin((lo2 - lo1) * r) * Math.cos(la2 * r);
+  const x = Math.cos(la1 * r) * Math.sin(la2 * r) - Math.sin(la1 * r) * Math.cos(la2 * r) * Math.cos((lo2 - lo1) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+};
 function birdKml(obs, title) {
   const col = { 3: "ff3f32b8", 2: "ff0a8fd6", 1: "ffa65a2a", 0: "ff94877d" };
+  const xy = ([la, lo]) => `${lo.toFixed(6)},${la.toFixed(6)},0`;
   const pm = o => {
-    const ll = o.pts.map(p => Geo.pxToLL(p)), c = ll.map(([la, lo]) => `${lo.toFixed(6)},${la.toFixed(6)},0`).join(" ");
-    const d = [`${o.n} бодгаль`, fmtDT(o.t), people(o).join(", "), listTxt(o.arga), listTxt(o.beh), o.pts.map(p => Geo.cell(p)).join(" → "), o.res].filter(Boolean).map(esc).join("<br>");
-    const geo = ll.length > 1 ? `<LineString><tessellate>1</tessellate><coordinates>${c}</coordinates></LineString>` : `<Point><coordinates>${c}</coordinates></Point>`;
-    return `<Placemark><name>${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}</name><description><![CDATA[${d}]]></description><styleUrl>#r${riskOf(o.sp)}</styleUrl>${geo}</Placemark>`;
+    const ll = o.pts.map(p => Geo.pxToLL(p)), lv = riskOf(o.sp), nm = `${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}`;
+    const d = [`${o.n} бодгаль`, fmtDT(o.t), people(o).join(", "), listTxt(o.arga), listTxt(o.beh), pathTxt(o.pts), o.res].filter(Boolean).map(esc).join("<br>");
+    const icon = (href, scale, heading, name) => `<Placemark>${name ? `<name>${name}</name>` : ""}<Style><IconStyle><color>${col[lv]}</color><scale>${scale}</scale>${heading != null ? `<heading>${heading.toFixed(1)}</heading>` : ""}<Icon><href>${href}</href></Icon><hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/></IconStyle><LabelStyle><scale>0</scale></LabelStyle></Style>`;
+    let arrows = "";
+    for (let k = 1; k < ll.length; k++) {
+      const a = ll[k - 1], b = ll[k];
+      arrows += `${icon("files/arrow.png", 0.9, bearing(a, b))}<Point><coordinates>${xy([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2])}</coordinates></Point></Placemark>`;
+    }
+    const line = ll.length > 1 ? `<Placemark><name>${nm}</name><description><![CDATA[${d}]]></description><styleUrl>#r${lv}</styleUrl><LineString><tessellate>1</tessellate><coordinates>${ll.map(xy).join(" ")}</coordinates></LineString></Placemark>` : "";
+    const first = `${icon("files/dot.png", ll.length > 1 ? 0.8 : 1.1, null, nm)}<description><![CDATA[${d}]]></description><Point><coordinates>${xy(ll[0])}</coordinates></Point></Placemark>`;
+    return `<Folder><name>${nm} · ${fmtTime(o.t)}</name>${line}${first}${arrows}</Folder>`;
   };
-  return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(title)}</name>${Object.entries(col).map(([k, v]) => `<Style id="r${k}"><LineStyle><color>${v}</color><width>4</width></LineStyle><IconStyle><color>${v}</color></IconStyle></Style>`).join("")}${obs.filter(o => o.pts.length).map(pm).join("")}</Document></kml>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(title)}</name>${Object.entries(col).map(([k, v]) => `<Style id="r${k}"><LineStyle><color>${v}</color><width>4</width></LineStyle></Style>`).join("")}${obs.filter(o => o.pts.length).map(pm).join("")}</Document></kml>`;
 }
-const birdKmz = (obs, title) => Zip.build([{ name: "doc.kml", data: birdKml(obs, title) }]);
+async function birdKmz(obs, title) {
+  const files = [{ name: "doc.kml", data: birdKml(obs, title) }];
+  for (const n of ["arrow", "dot"]) try { const r = await fetch(`img/${n}.png`); if (r.ok) files.push({ name: `files/${n}.png`, data: await r.blob() }); } catch (e) { }
+  return Zip.build(files);
+}
 
 /* ---------- Google Apps Script руу илгээх ---------- */
 const Sync = {
@@ -242,20 +321,29 @@ const Sync = {
     if (it.op === "file") {
       const b = await DB.get("blobs", it.ref); if (!b || b.url) return;
       const ext = (b.type || "image/jpeg").includes("png") ? "png" : "jpg";
-      const j = await this.post({ op: "file", folder: b.kind || "Зураг", name: `${b.kind || "zurag"}_${fmtDate(b.t).replace(/\./g, "")}_${b.id}.${ext}`, mime: b.type || "image/jpeg", data: await blobToB64(b.blob) });
+      const name = b.name || await Store.uniqueName([b.kind || "Зураг", stamp(b.t)].join("_"), ext);
+      const j = await this.post({ op: "file", folder: b.kind || "Зураг", name, mime: b.type || "image/jpeg", data: await blobToB64(b.blob) });
       b.url = j.url; await DB.put("blobs", b); return;
     }
     if (it.op === "track") {
       const i = await DB.get("insps", it.ref); if (!i) return;
-      const j = await this.post({ op: "file", folder: "GPS зам", name: `${i.route}_${isoDay(i.start)}_${fmtTime(i.start).replace(":", "")}_${i.id}.kml`, mime: "application/vnd.google-earth.kml+xml", text: trackKml(i) });
+      const j = await this.post({ op: "file", folder: "GPS зам", name: await Store.uniqueName(["GPS", routeName(i.route), stamp(i.start), i.staff].join("_"), "kml"), mime: "application/vnd.google-earth.kml+xml", text: trackKml(i) });
       i.trackUrl = j.url; await DB.put("insps", i); return;
     }
     if (it.op === "path") {
       const o = await DB.get("obs", it.ref); if (!o || !o.pts.length || o.pathUrl) return;
-      const name = `${isoDay(o.t)}_${fmtTime(o.t).replace(":", "")}_${(o.sp || "todorhoigui").replace(/\s+/g, "_")}_${o.id}.kmz`;
+      const name = await Store.uniqueName(["Нислэг", stamp(o.t), o.sp || "Зүйл тодорхойгүй"].join("_"), "kmz");
       const j = await this.post({ op: "file", folder: "Шувууны нислэгийн зам", name, mime: "application/vnd.google-earth.kmz", data: await blobToB64(await birdKmz([o], `${o.sp} ${fmtDT(o.t)}`)) });
       const cur = await DB.get("obs", o.id); if (cur) { cur.pathUrl = j.url; await DB.put("obs", cur); }
       return;
+    }
+    if (it.op === "shiftpath") { // ээлжийн бүх шувууны замыг нэг KMZ-д
+      const s = await DB.get("shifts", it.ref); if (!s) return;
+      const obs = (await DB.all("obs")).filter(o => o.shiftId === s.id && o.pts.length).sort((a, b) => a.t - b.t); if (!obs.length) return;
+      const name = await Store.uniqueName(["Нислэг", "ээлж", stamp(s.start), s.staff].join("_"), "kmz");
+      const j = await this.post({ op: "file", folder: "Шувууны нислэгийн зам", name, mime: "application/vnd.google-earth.kmz", data: await blobToB64(await birdKmz(obs, `Шувууны нислэгийн зам · ээлж ${fmtDT(s.start)} ${s.staff}`)) });
+      const cur = await DB.get("shifts", s.id); if (cur) { cur.pathUrl = j.url; await DB.put("shifts", cur); }
+      await Store.queue({ op: "upsert", table: "shifts", id: s.id }); return;
     }
     if (it.op === "upsert") {
       const store = it.table === "handover" ? "shifts" : it.table;
