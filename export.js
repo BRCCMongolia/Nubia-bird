@@ -12,7 +12,7 @@ const Report = {
     const bySp = {}; obs.forEach(o => { if (o.sp) bySp[o.sp] = (bySp[o.sp] || 0) + (+o.n || 0); });
     const top = Object.entries(bySp).sort((a, b) => b[1] - a[1]);
     // Сүргийн хэмжээ: нэг бүртгэлд тоолсон бодгаль. Давтамж = бүртгэлийн тоо, дундаж = нийт бодгаль ÷ давтамж
-    const flock = L => { const N = L.map(o => +o.n || 0); return { freq: L.length, ind: sum(L, o => +o.n || 0), avg: L.length ? Math.round(sum(L, o => +o.n || 0) / L.length * 10) / 10 : 0, min: N.length ? Math.min(...N) : 0, max: N.length ? Math.max(...N) : 0 }; };
+    const flock = L => { const N = L.map(o => +o.n || 0).filter(n => n > 0); return { freq: L.length, ind: sum(N, n => n), avg: N.length ? Math.round(sum(N, n => n) / N.length * 10) / 10 : 0, min: N.length ? Math.min(...N) : 0, max: N.length ? Math.max(...N) : 0 }; };
     const spStats = Object.keys(bySp).map(sp => ({ sp, ...flock(obs.filter(o => o.sp === sp)) })).sort((a, b) => b.ind - a.ind || b.freq - a.freq);
     const hours = Array(24).fill(0); obs.forEach(o => hours[new Date(o.t).getHours()] += 1);
     const cells = {}; obs.forEach(o => {
@@ -51,12 +51,12 @@ const Report = {
       ${R.flock.freq ? `<p><b>Сүрэг:</b> дундаж ${R.flock.avg}, min ${R.flock.min}, max ${R.flock.max} бодгаль</p>` : ""}
       <h2>Маршрут бүрээр үзлэг</h2><table><tr>${ROUTE_IDS.map(r => `<th>${esc(routeName(r))}</th>`).join("")}</tr><tr>${ROUTE_IDS.map(r => `<td>${R.routes[r]}</td>`).join("")}</tr></table>
       <h2>Зүйл бүрээр</h2>${R.spStats.length ? `<table><tr><th>№</th><th>Зүйл</th><th>Латин нэр</th><th>Эрсдэл</th><th>Давтамж</th><th>Нийт бодгаль</th><th>Дундаж</th><th>Min</th><th>Max</th></tr>${R.spStats.map((x, i) => row([i + 1, x.sp, latinOf(x.sp), RISK_LABEL[riskOf(x.sp)], x.freq, x.ind, x.avg, x.min, x.max])).join("")}</table>` : "<p>Ажиглалт алга.</p>"}
-      ${R.newSp.length ? `<h2>Шинэ зүйл</h2><table><tr><th>Огноо цаг</th><th>Зүйл</th><th>Тоо</th><th>Ажигласан</th></tr>${R.newSp.map(o => row([fmtDT(o.t), o.sp, o.n, o.observer])).join("")}</table>` : ""}
+      ${R.newSp.length ? `<h2>Шинэ зүйл</h2><table><tr><th>Огноо цаг</th><th>Зүйл</th><th>Тоо</th><th>Ажигласан</th></tr>${R.newSp.map(o => row([fmtDT(o.t), o.sp, o.n || "?", o.observer])).join("")}</table>` : ""}
       ${[[3, R.risk3], [2, R.risk2]].map(([lv, L]) => `<h2>Эрсдэлийн ${lv === 3 ? "III" : "II"} түвшний ажиглагдсан шувууд</h2>${L.length ? `<table><tr><th>Зүйл</th><th>Латин нэр</th><th>Бодгаль</th><th>Ажиглалт</th><th>Үргээлэг</th><th>Огноо цаг</th></tr>${L.map(x => row([x.sp, latinOf(x.sp), x.ind, x.obs.length, x.obs.filter(o => hasArga(o, "Үргээлэг")).length, x.obs.map(o => fmtDT(o.t)).join(", ")])).join("")}</table>` : "<p>Ажиглагдаагүй.</p>"}`).join("")}
-      ${R.kills.length ? `<h2>Устгал</h2><table><tr><th>Огноо</th><th>Зүйл</th><th>Тоо</th><th>Ажилтан</th></tr>${R.kills.map(o => row([fmtDT(o.t), o.sp, o.n, o.observer])).join("")}</table>` : ""}
+      ${R.kills.length ? `<h2>Устгал</h2><table><tr><th>Огноо</th><th>Зүйл</th><th>Тоо</th><th>Ажилтан</th></tr>${R.kills.map(o => row([fmtDT(o.t), o.sp, o.n || "?", o.observer])).join("")}</table>` : ""}
       <h2>Бүх ажиглалт (${R.obs.length})</h2>
       <table><tr><th>Огноо цаг</th><th>Ажигласан</th><th>Үзлэгийн төрөл</th><th>Маршрут</th><th>Юу хийсэн</th><th>Зүйл</th><th>Тоо</th><th>Зан төрх</th><th>Зам (тор)</th><th>Арга хэмжээ</th><th>Үр дүн</th></tr>
-      ${R.obs.map(o => row([fmtDT(o.t), people(o).join(", "), kindName(o), routeName(o.route), listTxt(o.arga), o.sp || "—", o.n, listTxt(o.beh), pathTxt(o.pts, 0, "→"), [o.tools.join(", "), o.acts.join(", ")].filter(Boolean).join("; "), o.res || "Дутуу"])).join("")}</table>
+      ${R.obs.map(o => row([fmtDT(o.t), people(o).join(", "), kindName(o), routeName(o.route), listTxt(o.arga), o.sp || "—", o.n || "?", listTxt(o.beh), pathTxt(o.pts, 0, "→"), [o.tools.join(", "), o.acts.join(", ")].filter(Boolean).join("; "), o.res || "Дутуу"])).join("")}</table>
       <div class="foot">Үүсгэсэн: ${fmtDT(Date.now())} · Nubia Bird. Зүйлийн нэр: Gombobaatar 2019. Эрсдэлийн түвшин: BRCC 2025. ${esc(COPYRIGHT)}</div>`;
   },
   print(R) {
@@ -87,14 +87,19 @@ const Export = {
     const obs = (await DB.all("obs")).filter(o => o.shiftId === s.id).sort((a, b) => a.t - b.t);
     const base = `NubiaBird_${isoDay(s.start)}_${s.staff.replace(/[^\p{L}\p{N}.]+/gu, "")}`;
     const files = [{ name: base + ".xlsx", data: await this.xlsx({ shifts: [s], insps, obs }) }], captions = [];
+    // Имэйлийн хэмжээ хэтрэхгүйн тулд зургийг ~12 МБ хүртэл хавсаргана. Бүх зураг Drive-д, холбоос нь Excel-д байна.
+    let bytes = 0, skipped = 0; const LIMIT = 12e6;
     for (const o of obs) for (const [k, id] of o.photos.entries()) {
       const b = await DB.get("blobs", id), name = `zurag/${b?.name || `Зураг_${stamp(o.t)}_${fileSafe(o.sp || "Зүйл тодорхойгүй")}_${k + 1}.jpg`}`;
-      if (b) { files.push({ name, data: b.blob }); if (o.photoNotes?.[id]) captions.push(`${name.slice(6)}: ${o.photoNotes[id]}`); }
+      if (!b?.blob) continue;
+      if (bytes + b.blob.size > LIMIT) { skipped++; continue; }
+      bytes += b.blob.size; files.push({ name, data: b.blob }); if (o.photoNotes?.[id]) captions.push(`${name.slice(6)}: ${o.photoNotes[id]}`);
     }
+    if (skipped) captions.push(`Имэйлийн хэмжээнээс болж ${skipped} зураг хавсаргаагүй. Бүх зураг Google Drive-ийн «Nubia Bird» хавтсанд, холбоос нь Excel-ийн «Зураг» баганад байна.`);
     if (captions.length) files.push({ name: "zurag/tailbar.txt", data: captions.join("\r\n") });
     const h = s.handover || {};
     for (const [n, id] of [["ogson_selfi", h.giver?.selfie], ["ogson_garin_useg", h.giver?.sign], ["avsan_selfi", h.receiver?.selfie], ["avsan_garin_useg", h.receiver?.sign], ...(h.car?.photos || []).map((id, i) => ["mashin_gemtel_" + (i + 1), id])]) {
-      const b = id && await DB.get("blobs", id); if (b) files.push({ name: `huleelceh/${b.name || n + "." + (b.type.includes("png") ? "png" : "jpg")}`, data: b.blob });
+      const b = id && await DB.get("blobs", id); if (b?.blob) files.push({ name: `huleelceh/${b.name || n + "." + (b.type.includes("png") ? "png" : "jpg")}`, data: b.blob });
     }
     for (const i of insps) if (i.track.length > 1) files.push({ name: `gps/GPS_${fileSafe(routeName(i.route))}_${stamp(i.start)}.kml`, data: trackKml(i) });
     if (obs.some(o => o.pts.length)) files.push({ name: "shuvuunii_zam.kmz", data: await birdKmz(obs, `Шувууны нислэгийн зам ${fmtDate(s.start)} ${s.staff}`) });
@@ -122,7 +127,7 @@ const Export = {
       <h2>Үзлэгүүд</h2><table><tr><th>Маршрут</th><th>Цаг</th><th>Нөхцөл</th><th>Ажиглалт</th><th>км</th></tr>
       ${R.insps.map(i => `<tr><td>${esc(routeName(i.route))}</td><td>${fmtTime(i.start)}–${i.end ? fmtTime(i.end) : ""}</td><td>${esc(COND.map(c => i.cond?.[c.key]).join(", "))}</td><td>${i.noBird ? "Шувуугүй" : R.obs.filter(o => o.inspId === i.id).length}</td><td>${i.km || 0}</td></tr>`).join("")}</table>
       <h2>Ажиглалтууд</h2><table><tr><th>Цаг</th><th>Зүйл</th><th>Тоо</th><th>Юу хийсэн</th><th>Зан төрх</th><th>Тор</th><th>Арга хэмжээ</th><th>Үр дүн</th></tr>
-      ${R.obs.map(o => `<tr><td>${fmtTime(o.t)}</td><td>${esc(o.sp || "—")}</td><td>${o.n}</td><td>${esc(listTxt(o.arga))}</td><td>${esc(listTxt(o.beh))}</td><td>${esc(pathTxt(o.pts, 0, "→"))}</td><td>${esc([...o.tools, ...o.acts].join(", "))}</td><td>${esc(o.res || "Дутуу")}</td></tr>`).join("")}</table>
+      ${R.obs.map(o => `<tr><td>${fmtTime(o.t)}</td><td>${esc(o.sp || "—")}</td><td>${o.n || "?"}</td><td>${esc(listTxt(o.arga))}</td><td>${esc(listTxt(o.beh))}</td><td>${esc(pathTxt(o.pts, 0, "→"))}</td><td>${esc([...o.tools, ...o.acts].join(", "))}</td><td>${esc(o.res || "Дутуу")}</td></tr>`).join("")}</table>
       <h2>Хүлээлцсэн тоног төхөөрөмж</h2><table>${Object.entries(h.equipment || {}).map(([a, b]) => `<tr><td>${esc(a)}</td><td>${b ? "Бий" : "Байхгүй" + (h.equipNotes?.[a] ? ": " + esc(h.equipNotes[a]) : "")}</td></tr>`).join("")}<tr><td>Дохионы бууны сум</td><td>${h.sigAmmo ?? ""} (байх ёстой ${h.sigExpected ?? "—"})</td></tr>${s.supplies?.length ? `<tr><td>Ээлжийн дунд авсан</td><td>${esc(supplyTxt(s))}</td></tr>` : ""}<tr><td>Ангийн бууны сум</td><td>${h.gunAmmo ?? ""} (байх ёстой ${h.gunExpected ?? "—"})</td></tr></table>
       <h2>Машин</h2><table><tr><td>Машин</td><td>${esc(h.car?.name || "")}</td></tr><tr><td>Гүйлт</td><td>${esc(h.car?.km ?? "")} км</td></tr><tr><td>Түлш</td><td>${esc(h.car?.fuel || "")}</td></tr>${Object.entries(h.car?.checks || {}).map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}${h.car?.checkNotes?.[a] ? ": " + esc(h.car.checkNotes[a]) : ""}</td></tr>`).join("")}<tr><td>Цэвэрхэн байдал</td><td>${esc(h.car?.clean || "")}</td></tr><tr><td>Гэмтэл</td><td>${esc(h.car?.damage || "Байхгүй")}</td></tr></table>
       <h2>Ээлж хүлээлцсэн</h2><p>${h.solo ? "Хүлээлцэлгүй үлдээгээд дуусгасан. " : ""}Хүлээлгэн өгсөн: <b>${esc(h.giver?.name || "")}</b> · ${h.at ? fmtDT(h.at) : ""} · Хүлээн авсан: <b>${esc(h.receiver?.name || "")}</b> (${esc(h.receiver?.pos || "")})${h.solo && h.takenAt ? " · " + fmtDT(h.takenAt) : ""}. Сэлфи, гарын үсэг ZIP дотор.</p>
@@ -134,7 +139,7 @@ const Export = {
     const shifts = await DB.all("shifts"), insps = await DB.all("insps"), obs = await DB.all("obs"), blobs = await DB.all("blobs");
     const files = [{ name: "NubiaBird_buh_ogogdol.xlsx", data: await this.xlsx({ shifts, insps, obs }) },
       { name: "nubia-bird.json", data: JSON.stringify({ version: APP_VERSION, at: Date.now(), shifts, insps, obs }, null, 1) }];
-    for (const b of blobs) files.push({ name: `files/${b.kind || "zurag"}_${b.id}.${(b.type || "").includes("png") ? "png" : "jpg"}`, data: b.blob });
+    for (const b of blobs.filter(b => b.blob)) files.push({ name: `files/${b.kind || "zurag"}_${b.id}.${(b.type || "").includes("png") ? "png" : "jpg"}`, data: b.blob });
     return Zip.build(files);
   }
 };

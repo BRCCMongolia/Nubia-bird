@@ -31,6 +31,7 @@ const Store = {
 
   /* ----- Ээлж ----- */
   async startShift({ staff, pos, coworkers, len, car, sigAmmo, gunAmmo, ammoIn, from }) {
+    if (this.shift) return this.shift; // давхар дарахад хоёр ээлж үүсгэхгүй
     const s = { id: uid(), staff, pos, coworkers: coworkers || [], len, car, start: Date.now(), end: null, sigAmmoStart: sigAmmo ?? 0,
       gunAmmoStart: gunAmmo ?? 0, ammoIn: ammoIn || null, from: from || null, handover: null, supplies: [] };
     await DB.put("shifts", s); await DB.setMeta("currentShift", s.id);
@@ -39,7 +40,7 @@ const Store = {
   },
   /* solo: хүлээн авагчгүй дуусгаж, бүх зүйлийг үлдээнэ. Дараагийн ажилтан "Ээлж авах"-аар шалгаж авна. */
   async closeShift(handover, { solo = false } = {}) {
-    const s = this.shift; if (!s) return;
+    const s = this.shift; if (!s || s.end) return;
     s.end = Date.now(); s.handover = handover; handover.pending = solo;
     await DB.put("shifts", s); await DB.setMeta("currentShift", null);
     if (solo) await DB.setMeta("pendingShift", s.id);
@@ -56,13 +57,14 @@ const Store = {
   async pendingShift() { const id = await DB.meta("pendingShift", null); return id ? await DB.get("shifts", id) : null; },
   /* Үлдээсэн ээлжийг шалгаж авах */
   async takeOver(old, receiver, check) {
-    const h = old.handover; h.receiver = receiver; h.check = check; h.pending = false; h.takenAt = Date.now();
+    const h = old.handover; if (!h.pending) return false; h.receiver = receiver; h.check = check; h.pending = false; h.takenAt = Date.now();
     await DB.put("shifts", old); await DB.setMeta("pendingShift", null);
     await this.nameHandover({ receiver }, h.takenAt);
     for (const b of [receiver.selfie, receiver.sign]) if (b) await this.queue({ op: "file", id: b });
     await this.queue({ op: "upsert", table: "shifts", id: old.id });
     await this.queue({ op: "upsert", table: "handover", id: old.id });
     if (this.settings.autoMail) await this.queue({ op: "mail", kind: "shift", id: old.id });
+    return true;
   },
   /* Сүүлд дууссан ээлжийн тоолсон үлдэгдэл сум (байхгүй бол 0) */
   async lastAmmo() {
@@ -83,6 +85,7 @@ const Store = {
   },
   /* kind: "shift" (ээлжийн) эсвэл "extra" (ээлжийн бус: ээлжгүй, өөр утсан дээр ч хийж болно) */
   async startInsp({ kind, route, routeNote, cond, temp, staff, pos, coworkers }) {
+    if (this.insp) return this.insp;
     const shiftId = kind === "shift" && this.shift ? this.shift.id : null;
     const i = { id: uid(), shiftId, kind: shiftId ? "shift" : "extra", staff, pos, coworkers: coworkers || [], route, routeNote: routeNote || "",
       cond, temp: temp ?? "", start: Date.now(), end: null, noBird: false, track: [], km: 0, note: "" };
@@ -125,7 +128,19 @@ const Store = {
     await this.bumpUsage(o.sp);
     return o;
   },
-  async delObs(o) { await DB.del("obs", o.id); await this.queue({ op: "delete", table: "obs", id: o.id }); },
+  /* Үзлэгийг доторх ажиглалттай нь устгана (утас ба Sheet-ээс). Drive дахь файлууд үлдэнэ. */
+  async delInsp(i) {
+    for (const o of await this.obsOf(o => o.inspId === i.id)) await this.delObs(o);
+    await DB.del("insps", i.id);
+    if (this.insp?.id === i.id) { this.insp = null; await DB.setMeta("currentInsp", null); }
+    for (const x of await DB.all("outbox")) if (x.ref === i.id && (x.op === "track" || x.table === "insps")) await DB.del("outbox", x.id);
+    await this.queue({ op: "delete", table: "insps", id: i.id });
+  },
+  async delObs(o) {
+    await DB.del("obs", o.id);
+    for (const x of await DB.all("outbox")) if (x.ref === o.id && x.op !== "delete") await DB.del("outbox", x.id);
+    await this.queue({ op: "delete", table: "obs", id: o.id });
+  },
   async bumpUsage(sp) { if (!sp) return; const u = await DB.meta("usage", {}); u[sp] = (u[sp] || 0) + 1; await DB.setMeta("usage", u); },
   async obsOf(filter) { return (await DB.all("obs")).filter(filter).sort((a, b) => a.t - b.t); },
 
@@ -151,7 +166,13 @@ const Store = {
     for (const id of h.car?.photos || []) await this.nameBlob(id, ["Машины зураг", at, h.car.name]);
   },
   async putBlob(blob, kind) { const b = { id: uid(), blob, kind, type: blob.type, t: Date.now(), url: null }; await DB.put("blobs", b); return b.id; },
-  async blobURL(id) { const b = await DB.get("blobs", id); return b ? URL.createObjectURL(b.blob) : ""; },
+  async blobURL(id) { const b = await DB.get("blobs", id); return b?.blob ? URL.createObjectURL(b.blob) : ""; },
+  /* Drive-д орсон, 30 хоногоос хуучин зургийг утаснаас цэвэрлэнэ (холбоос нь үлдэнэ) */
+  async cleanBlobs(days = 30) {
+    const old = Date.now() - days * 86400000; let n = 0;
+    for (const b of await DB.all("blobs")) if (b.url && b.blob && b.t < old) { b.blob = null; await DB.put("blobs", b); n++; }
+    return n;
+  },
 
   /* ----- Илгээх дараалал. Мөрийг илгээх үед нь хамгийн сүүлийн байдлаар нь бүрдүүлнэ. ----- */
   async queue(item) {
@@ -226,7 +247,7 @@ const Rows = {
       "ID": o.id, "Үзлэг ID": o.inspId || "", "Ээлж ID": o.shiftId || "", "Огноо": fmtDate(o.t), "Цаг": fmtTime(o.t),
       "Ажигласан": o.observer, "Хамт ажилласан": (o.coworkers || []).join(", "), "Үзлэгийн төрөл": kindName(o), "Маршрут": routeName(o.route), "Юу хийсэн": listTxt(o.arga), "Ангилал": o.type,
       "Зүйл": o.sp, "Латин нэр": latinOf(o.sp), "Шинэ зүйл": isNewSp(o) ? "Тийм" : "",
-      "Эрсдэл": RISK_LABEL[riskOf(o.sp)], "Тоо": +o.n || 0, "Зан төрх": listTxt(o.beh),
+      "Эрсдэл": RISK_LABEL[riskOf(o.sp)], "Тоо": +o.n || "", "Зан төрх": listTxt(o.beh),
       "Нислэгийн зам (тор)": pathTxt(o.pts), "Нислэгийн зам (KMZ)": o.pathUrl || "", "Байршил": o.loc,
       "Ажиглагчийн өргөрөг": o.lat ?? "", "Ажиглагчийн уртраг": o.lon ?? "", "Багаж": o.tools.join(", "),
       "Ангийн бууны сум": +o.ammoGun || 0, "Дохионы бууны сум": +o.ammoSig || 0, "Авсан арга хэмжээ": o.acts.join(", "),
@@ -269,8 +290,8 @@ function birdKml(obs, title) {
   const col = { 3: "ff3f32b8", 2: "ff0a8fd6", 1: "ffa65a2a", 0: "ff94877d" };
   const xy = ([la, lo]) => `${lo.toFixed(6)},${la.toFixed(6)},0`;
   const pm = o => {
-    const ll = o.pts.map(p => Geo.pxToLL(p)), lv = riskOf(o.sp), nm = `${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}`;
-    const d = [`${o.n} бодгаль`, fmtDT(o.t), people(o).join(", "), listTxt(o.arga), listTxt(o.beh), pathTxt(o.pts), o.res].filter(Boolean).map(esc).join("<br>");
+    const ll = o.pts.map(p => Geo.pxToLL(p)), lv = riskOf(o.sp), nm = `${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n || "?"}`;
+    const d = [o.n ? `${o.n} бодгаль` : "Тоо тодорхойгүй", fmtDT(o.t), people(o).join(", "), listTxt(o.arga), listTxt(o.beh), pathTxt(o.pts), o.res].filter(Boolean).map(esc).join("<br>");
     const icon = (href, scale, heading, name) => `<Placemark>${name ? `<name>${name}</name>` : ""}<Style><IconStyle><color>${col[lv]}</color><scale>${scale}</scale>${heading != null ? `<heading>${heading.toFixed(1)}</heading>` : ""}<Icon><href>${href}</href></Icon><hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/></IconStyle><LabelStyle><scale>0</scale></LabelStyle></Style>`;
     let arrows = "";
     for (let k = 1; k < ll.length; k++) {
@@ -306,13 +327,23 @@ const Sync = {
   async run() {
     if (this.busy || !this.configured() || !navigator.onLine) { this.notify(); return; }
     this.busy = true; this.notify();
+    // Нэг зүйл бүтэлгүйтвэл бусдыг нь үргэлжлүүлж илгээнэ (алдаатайг нь хойш тавина). Сүлжээ тасарвал зогсоно.
     try {
       const items = (await DB.all("outbox")).sort((a, b) => a.created - b.created);
+      let failed = 0;
       for (const it of items) {
-        await this.send(it);
-        await DB.del("outbox", it.id);
-        this.lastOk = Date.now(); this.lastError = ""; this.notify();
+        try {
+          if (await this.send(it) === "wait") continue; // имэйлийн хаяг оруулах хүртэл дараалалд үлдэнэ
+          await DB.del("outbox", it.id);
+          this.lastOk = Date.now(); this.notify();
+        } catch (e) {
+          if (!navigator.onLine || e instanceof TypeError) throw e; // сүлжээний алдаа
+          const cur = await DB.get("outbox", it.id);
+          if (cur) { cur.tries = (cur.tries || 0) + 1; cur.err = String(e.message || e); cur.created = Date.now() + Math.random(); await DB.put("outbox", cur); }
+          failed++; this.lastError = String(e.message || e);
+        }
       }
+      if (!failed) this.lastError = "";
     } catch (e) {
       this.lastError = String(e.message || e);
     } finally { this.busy = false; this.notify(); }
@@ -353,7 +384,7 @@ const Sync = {
     }
     if (it.op === "delete") { await this.post({ op: "delete", sheet: SHEET_NAMES[it.table], id: it.ref }); return; }
     if (it.op === "mail") {
-      const to = Store.settings.to.trim(); if (!to) return;
+      const to = Store.settings.to.trim(); if (!to) return "wait";
       if (it.kind === "shift") {
         const s = await DB.get("shifts", it.ref); if (!s) return;
         const pack = await Export.shiftZip(s);

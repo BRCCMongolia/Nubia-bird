@@ -43,6 +43,14 @@ Sync.listeners.add(updateSync);
 addEventListener("online", updateSync); addEventListener("offline", updateSync);
 
 /* ---------- Нийтлэг хэсгүүд ---------- */
+// Товчийг давхар дарахаас хамгаална: үйлдэл дуустал дахин ажиллахгүй
+function once(fn) {
+  let run = false;
+  return async function (e) {
+    if (run) return; run = true; const b = e?.currentTarget; if (b) b.disabled = true;
+    try { return await fn.call(this, e); } finally { run = false; if (b?.isConnected) b.disabled = false; }
+  };
+}
 const shiftEnd = s => s.start + s.len * 3600000;
 const shiftLine = s => `${esc(s.staff)} · ${fmtDT(s.start)} – ${fmtDT(s.end || shiftEnd(s))} (${s.len} цаг)`;
 const coLine = x => x.coworkers?.length ? `Хамт: ${x.coworkers.map(esc).join(", ")}` : "";
@@ -56,7 +64,7 @@ const countLine = (insps, obs) => {
 };
 const riskBadge = sp => { const r = riskOf(sp); return r ? `<span class="badge r${r}">${RISK_LABEL[r]}</span>` : ""; };
 const obsItem = o => `<button type="button" class="item" data-obs="${o.id}">
-  <span class="t ${riskOf(o.sp) === 3 ? "r3" : ""}">${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n}${o.newSp ? ` <span class="badge new">Шинэ</span>` : ""}</span>
+  <span class="t ${riskOf(o.sp) === 3 ? "r3" : ""}">${esc(o.sp || "Зүйл тодорхойгүй")} × ${o.n || "?"}${o.newSp ? ` <span class="badge new">Шинэ</span>` : ""}</span>
   <span class="badge ${o.done ? "done" : "todo"}">${o.done ? "Бүрэн" : "Дутуу"}</span>
   <span class="s">${fmtTime(o.t)} · ${esc(listTxt(o.arga))}${asList(o.beh).length ? " · " + esc(listTxt(o.beh)) : ""}${o.pts.length ? " · " + esc(pathTxt(o.pts, 4, "→")) : ""}${o.photos.length ? " · 📷" + o.photos.length : ""}</span></button>`;
 function bindObsItems(root) { $$("[data-obs]", root).forEach(b => b.onclick = () => App.go("obs", { id: b.dataset.obs })); }
@@ -187,7 +195,9 @@ Views.home = async () => {
   const [shifts, insps, allObs] = await Promise.all([DB.all("shifts"), DB.all("insps"), DB.all("obs")]);
   const past = shifts.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 15);
   const extras = insps.filter(x => !x.shiftId).sort((a, b) => b.start - a.start).slice(0, 15);
-  const todo = allObs.filter(o => !o.done).length;
+  const todo = allObs.filter(o => !o.done).length, box = await DB.all("outbox");
+  const oldest = box.length ? Math.min(...box.map(x => x.created)) : 0, failed = box.filter(x => x.tries).length;
+  const stale = oldest && Date.now() - oldest > 12 * 3600000;
   const liveBanner = i ? `<div class="banner info"><b>${esc(routeName(i.route))}</b><span class="grow">${i.shiftId ? "" : "ээлжийн бус "}үзлэг явагдаж байна · ${fmtDur(Date.now() - i.start)}</span></div>
     <button class="btn p xl" data-go="insp">Үзлэг үргэлжлүүлэх</button>` : "";
   let top = "";
@@ -214,7 +224,7 @@ Views.home = async () => {
       ${liveBanner || `<button class="btn p xl" data-go="inspStart">${ICON.plus} Үзлэг эхлүүлэх</button>`}
       <div class="row">${i ? "" : `<button class="btn soft" data-go="inspStart" data-kind="extra">Ээлжийн бус үзлэг</button>`}<button class="btn soft" id="supply">± Буу, сум</button></div>
       <button class="btn" data-go="handover">Ээлж хүлээлгэх</button>
-      <button class="btn sm ghost solo" data-go="handover" data-kind="solo">Хүлээлцэхгүй дуусгах</button></div>
+      <button class="btn solo" data-go="handover" data-kind="solo">Хүлээлцэхгүй дуусгах</button></div>
       ${sI.length ? fold("cur-insps", "Энэ ээлжийн үзлэг", `<div class="list">${sI.map(x => inspItem(x, allObs)).join("")}</div>`, { open: true, count: sI.length }) : ""}`;
   }
   const shiftCard = x => { const o = allObs.filter(b => b.shiftId === x.id), n = insps.filter(b => b.shiftId === x.id).length;
@@ -222,6 +232,8 @@ Views.home = async () => {
   return {
     title: "Nubia Bird",
     html: `${top}
+      ${StorageWarn ? `<div class="banner crit"><b>!</b><span class="grow">${StorageWarn} Лавлах → «Бүх өгөгдлийг татах»-аар нөөцлөөд, утасны зай гаргана уу.</span></div>` : ""}
+      ${stale || failed ? `<button class="banner crit" data-go="ref" style="border:0;cursor:pointer;text-align:left"><b>${box.length}</b><span class="grow">зүйл Sheet рүү ${stale ? "12-оос дээш цаг " : ""}илгээгдээгүй${failed ? `, ${failed} нь алдаатай` : ""}. Интернэт, тохиргоогоо шалгана уу. Илгээгээгүй байхад аппыг утаснаас бүү устга.</span><span>›</span></button>` : ""}
       ${todo ? `<button class="banner warn" data-go="todo" style="border:0;cursor:pointer;text-align:left"><b>${todo}</b><span class="grow">ажиглалт дутуу байна. Дарж бөглөнө үү.</span><span>›</span></button>` : ""}
       ${fold("routes", "Үзлэгийн маршрут", `<div class="routes">${ROUTES.map(routeCard).join("")}</div>`, { open: true })}
       ${past.length ? fold("past", "Өмнөх үндсэн ээлжүүд", `<div class="list">${past.map(shiftCard).join("")}</div>`, { count: past.length }) : ""}
@@ -244,13 +256,13 @@ function supplySheet() {
     <div class="field"><span class="label">Тайлбар (заавал биш)</span><input type="text" id="snote" placeholder="жишээ нь хэнээс авсан"></div>
     <button class="btn p xl" id="sok">Хадгалах</button>`, (b, close) => {
     bindChips(b, (k, v) => { if (k === "dir") st.dir = v; else { st.item = v; $("#nf", b).hidden = v === "Ангийн буу"; $("#dirf", b).hidden = v === "Ангийн буу"; } });
-    $("#sok", b).onclick = async () => {
+    $("#sok", b).onclick = once(async () => {
       const n = st.item === "Ангийн буу" ? 1 : +$("#sn", b).value;
       if (!(n > 0)) { toast("Тоогоо бичнэ үү"); $("#sn", b).focus(); return; }
       const back = st.dir !== "Авсан" && st.item !== "Ангийн буу";
       await Store.addSupply(st.item, back ? -n : n, $("#snote", b).value.trim());
       close(); toast(`${st.item} ${back ? "буцааж өгсөн" : "авсан"} бүртгэгдлээ`); App.render();
-    };
+    });
   });
 }
 const routeCard = r => `<button class="route" data-route="${r.id}"><img src="${r.thumb}" alt=""><div><b>${r.id}</b> <span class="small">· ${r.km} км</span><div class="s">${esc(r.short)}</div></div><span class="go">›</span></button>`;
@@ -279,13 +291,13 @@ Views.shiftStart = async () => {
       bindStaffPicker($("#sp", m), st, () => $("#go", m).disabled = !st.staff);
       const ammo = bindAmmoIn(m, () => prev);
       bindChips(m, (k, v, b) => { if (k === "len") st.len = +v; if (k === "car") { st.car = v; if (b?.dataset.keep) Store.addCar(v); } });
-      $("#go", m).onclick = async () => {
+      $("#go", m).onclick = once(async () => {
         if (Store.shift) { toast("Ээлж аль хэдийн эхэлсэн байна"); return; }
         if (!(st.len > 0)) { toast("Ээлжийн хугацааг сонгоно уу"); return; }
         const a = ammo.get();
         await Store.startShift({ staff: st.staff, pos: st.pos, coworkers: st.coworkers, len: st.len, car: st.car, sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a });
         toast("Ээлж эхэллээ"); App.go("home", {}, { reset: true });
-      };
+      });
     }
   };
 };
@@ -340,14 +352,14 @@ Views.inspStart = async ({ route, kind }) => {
       $$("[data-pick]", m).forEach(b => b.onclick = () => { st.route = b.dataset.pick; $$("[data-rp]", m).forEach(x => x.setAttribute("aria-pressed", x.dataset.rp === st.route)); $("#freebox", m).hidden = st.route !== FREE_ROUTE; });
       $$("[data-see]", m).forEach(b => b.onclick = () => App.go("route", { id: b.dataset.see }));
       bindChips(m, (k, v) => { if (k === "kind") { st.kind = v; drawStaff(); } else st.cond[k] = v; });
-      $("#go", m).onclick = async () => {
+      $("#go", m).onclick = once(async () => {
         const w = who[st.kind];
         if (!w.staff) { toast("Үндсэн ажилтнаа сонгоно уу"); $("#sp details", m).open = true; $("#sp", m).scrollIntoView({ block: "center" }); return; }
         if (!st.route) { toast("Маршрутаа сонгоно уу"); $(".routepick", m).scrollIntoView({ block: "center" }); return; }
         const t = $("#temp", m).value;
         await Store.startInsp({ kind: st.kind, route: st.route, routeNote: st.route === FREE_ROUTE ? $("#note", m).value.trim() : "", cond: st.cond, temp: t === "" ? "" : +t, staff: w.staff, pos: w.pos, coworkers: w.coworkers });
         Tracker.start(); App.go("insp", {}, { replace: true });
-      };
+      });
     }
   };
 };
@@ -365,30 +377,49 @@ Views.insp = async () => {
       <button class="btn p xl" id="add" style="min-height:76px;font-size:20px">${ICON.plus} Шувуу / амьтан</button>
       <div class="small" style="text-align:center;margin-top:-6px">Завгүй бол зүйлээ сонгоод «Хадгалаад дараа бөглөх» дарна.</div>
       <div class="row"><button class="btn" id="nobird">Шувуугүй</button><button class="btn d" id="end">Үзлэг дуусгах</button></div>
-      <p class="sec">Ажиглалт (${obs.length})</p>
+      <p class="sec">Ажиглалт (<span id="obscnt">${obs.length}</span>)</p>
       <div class="list" id="obs">${obs.length ? obs.slice().reverse().map(obsItem).join("") : `<div class="empty">Шувуу, амьтан харвал дээрх товчийг дарна.</div>`}</div>
-      <p class="sec">Явсан зам</p><div id="map"></div>
-      ${i.route !== FREE_ROUTE ? `<button class="btn sm soft" id="see" style="justify-self:start">${ICON.map} ${esc(i.route)} маршрут харах</button>` : ""}`,
+      <div class="row between" style="margin:6px 0 -4px"><p class="sec" style="margin:0 2px">Явсан зам</p><button type="button" class="btn sm quickbtn" id="quick" aria-pressed="false">⚡ Хялбар бүртгэл</button></div>
+      <div class="small" id="quickhint" hidden>Шувуу харвал газрын зураг дээр байгаа цэг дээр нь дараад зүйлээ сонгоно. Шууд хадгалагдана.</div><div id="map"></div>
+      ${i.route !== FREE_ROUTE ? `<button class="btn sm soft" id="see" style="justify-self:start">${ICON.map} ${esc(i.route)} маршрут харах</button>` : ""}
+      <button type="button" class="btn sm ghost delinsp" id="delinsp">Үзлэг устгах</button>`,
     mount(m) {
       const clock = () => { const d = Date.now() - i.start, h = Math.floor(d / 3600000), mm = Math.floor(d / 60000) % 60, ss = Math.floor(d / 1000) % 60; $("#clock", m).textContent = (h ? h + ":" + pad(mm) : mm) + ":" + pad(ss); };
-      const pm = PathMap($("#map", m), { pts: [], track: i.track.map(p => [p[0], p[1]]), me: Tracker.last ? [Tracker.last.lat, Tracker.last.lon] : null, readonly: true });
+      const meNow = () => Tracker.last ? [Tracker.last.lat, Tracker.last.lon] : null, marks = () => obs.filter(o => o.pts.length).map(o => o.pts[0]);
+      let quick = false; try { quick = localStorage.getItem("quickMode") === "1"; } catch (e) { }
+      let pm = null;
+      const makeMap = () => {
+        pm?.destroy(); const box = $("#map", m); box.className = ""; box.innerHTML = "";
+        box.classList.toggle("big", quick); $("#quick", m).setAttribute("aria-pressed", quick); $("#quickhint", m).hidden = !quick;
+        pm = PathMap(box, quick ? { pts: [], track: i.track.map(p => [p[0], p[1]]), me: meNow(), readonly: true, fill: true, follow: true, marks: marks(), onTap: px => quickPick(px, saved) }
+          : { pts: [], track: i.track.map(p => [p[0], p[1]]), me: meNow(), readonly: true });
+      };
+      // Хялбар бүртгэлээр хадгалсны дараа жагсаалт, тэмдгийг шинэчилнэ
+      const saved = async () => {
+        obs.length = 0; obs.push(...await Store.obsOf(o => o.inspId === i.id));
+        $("#obs", m).innerHTML = obs.length ? obs.slice().reverse().map(obsItem).join("") : `<div class="empty">Шувуу, амьтан харвал дээрх товчийг дарна.</div>`;
+        $("#obscnt", m).textContent = obs.length; bindObsItems(m); pm?.set({ marks: marks() });
+      };
+      makeMap();
+      $("#quick", m).onclick = () => { quick = !quick; try { localStorage.setItem("quickMode", quick ? "1" : "0"); } catch (e) { } makeMap(); if (quick) $("#map", m).scrollIntoView({ behavior: "smooth", block: "start" }); };
       const gps = () => {
         const [c, t] = Tracker.status(); $("#gps", m).className = "gps " + c; $("#gps span", m).textContent = t;
         $("#km", m).textContent = `Явсан: ${(Store.insp?.km || 0).toFixed(2)} км · ${Store.insp?.track.length || 0} цэг`;
-        if (Store.insp) pm.set({ track: Store.insp.track.map(p => [p[0], p[1]]), me: Tracker.last ? [Tracker.last.lat, Tracker.last.lon] : null });
+        if (Store.insp) pm.set({ track: Store.insp.track.map(p => [p[0], p[1]]), me: meNow() });
       };
       clock(); gps();
       const t = setInterval(clock, 1000); Tracker.listeners.add(gps);
-      App.onCleanup(() => { clearInterval(t); Tracker.listeners.delete(gps); pm.destroy(); });
+      App.onCleanup(() => { clearInterval(t); Tracker.listeners.delete(gps); pm.destroy(); quickBar.hide(); });
       bindObsItems(m);
       $("#see", m)?.addEventListener("click", () => App.go("route", { id: i.route }));
+      $("#delinsp", m).onclick = once(async () => { if (await askDelInsp(i, obs.length)) { Tracker.stop(); App.go("home", {}, { reset: true }); } });
       $("#add", m).onclick = () => App.go("obs", { draft: freshObs() });
-      $("#nobird", m).onclick = async () => {
+      $("#nobird", m).onclick = once(async () => {
         if (obs.length) { toast("Ажиглалттай үзлэгийг «Үзлэг дуусгах»-аар дуусгана"); return; }
         if (!await confirmBox("Шувуу, амьтан ажиглагдаагүй гэж тэмдэглээд үзлэгээ дуусгах уу?")) return;
         await finishInsp(true);
-      };
-      $("#end", m).onclick = async () => {
+      });
+      $("#end", m).onclick = once(async () => {
         const todo = obs.filter(o => !o.done).length;
         if (!obs.length) {
           const r = await confirmBox("Ажиглалт алга байна. «Шувуугүй» гэж дуусгах уу?", { ok: "Шувуугүй", cancel: "Болих" });
@@ -400,9 +431,55 @@ Views.insp = async () => {
           if (!r) return;
         }
         await finishInsp(false);
-      };
+      });
     }
   };
+};
+/* Үзлэг устгах: 2 удаа асууна */
+async function askDelInsp(i, n) {
+  if (!await confirmBox(`Та энэ үзлэгийг${n ? ` (${n} ажиглалттай)` : ""} устгахдаа итгэлтэй байна уу?`, { ok: "Тийм", cancel: "Үгүй" })) return false;
+  if (!await confirmBox(`<b>Устгалаа шүү!</b><br>${esc(routeName(i.route))} · ${fmtDT(i.start)} үзлэг${n ? ` болон ${n} ажиглалт` : ""} утас, Sheet-ээс устана. Дахин сэргээх боломжгүй.`, { ok: "Бүрмөсөн устгах", cancel: "Болих", danger: true })) return false;
+  await Store.delInsp(i); toast("Үзлэг устгагдлаа"); return true;
+}
+/* ⚡ Хялбар бүртгэл: зураг дээр дарсан цэгт зүйл сонгоод шууд хадгална. Тоо толгойг доорх мөрөөс сонгоно (заавал биш). */
+function quickPick(px, onSaved) {
+  const cell = pathCells([px])[0];
+  openSheet(`Ямар зүйл? · ${cell}`, `<input type="search" id="qq" placeholder="Нэрээр хайх…" autocomplete="off"><div class="sugg" id="qs" hidden></div><div id="qlist"></div>`, async (b, close) => {
+    const btn = (n, big) => `<button type="button" class="chip${big ? " big" : ""}" data-sp="${esc(n)}"><span class="r${riskOf(n)} dot">●</span>${esc(n)}</button>`;
+    const today = await todaySpecies("Шувуу"), common = (await usageSorted(QUICK_BIRD, typeGroup("Шувуу"))).filter(n => !today.includes(n)).slice(0, 12);
+    $("#qlist", b).innerHTML = (today.length ? `<div class="splabel">Өнөөдөр ажиглагдсан</div><div class="chips">${today.map(n => btn(n, true)).join("")}</div>` : "")
+      + `<div class="splabel">Түгээмэл</div><div class="chips">${common.map(n => btn(n)).join("")}</div>`;
+    const q = $("#qq", b), sg = $("#qs", b);
+    q.addEventListener("input", () => { const v = q.value.trim(); sg.hidden = !v; sg.innerHTML = searchSpecies(v, null).map(s => `<button type="button" data-sp="${esc(s[0])}"><span>${esc(s[0])} <em>${esc(s[3])}</em></span>${riskBadge(s[0])}</button>`).join("") + (v ? `<button type="button" data-sp="${esc(v)}"><span>«${esc(v)}» гэж өөрөө бичих</span></button>` : ""); });
+    let busy = false;
+    b.addEventListener("click", async e => {
+      const c = e.target.closest("[data-sp]"); if (!c || busy) return; busy = true;
+      const sp = c.dataset.sp, g = (SP_INDEX.get(sp) || [])[1], o = freshObs(); delete o._new;
+      const prev = (await Store.obsOf(x => x.inspId === o.inspId)).pop(); if (prev) { o.loc = prev.loc; o.tools = [...prev.tools]; }
+      Object.assign(o, { sp, type: !g || g === "Ш" ? "Шувуу" : "Амьтан", n: null, arga: ["Ажиглалт"], pts: [px] });
+      await Store.saveObs(o); close(); await onSaved?.(); quickBar.show(o, onSaved);
+    });
+    setTimeout(() => q.blur());
+  });
+}
+const quickBar = {
+  el: null, timer: null,
+  show(o, onSaved) {
+    this.hide();
+    const el = this.el = document.createElement("div"); el.className = "quickbar";
+    el.innerHTML = `<div class="qt"><b>${esc(o.sp)}</b> хадгалагдлаа · тоо толгой?</div><div class="qn">${[1, 2, 5, 10, 20].map(n => `<button type="button" data-n="${n}">${n}</button>`).join("")}<button type="button" class="undo" data-undo>Буцаах</button></div>`;
+    document.body.appendChild(el);
+    el.onclick = async e => {
+      const b = e.target.closest("button"); if (!b) return;
+      clearTimeout(this.timer); this.hide();
+      const cur = await DB.get("obs", o.id); if (!cur) return;
+      if (b.dataset.undo != null) { await Store.delObs(cur); toast("Буцаалаа"); }
+      else { cur.n = +b.dataset.n; await Store.saveObs(cur); toast(`${cur.sp} × ${cur.n}`); }
+      await onSaved?.();
+    };
+    this.timer = setTimeout(() => this.hide(), 6000);
+  },
+  hide() { clearTimeout(this.timer); this.el?.remove(); this.el = null; }
 };
 async function finishInsp(noBird) {
   const i = await Store.endInsp(noBird); Tracker.stop();
@@ -430,7 +507,7 @@ Views.obs = async ({ id, inspId, draft }) => {
   }
   const behFor = t => (t === "Шувуу" ? BEH_BIRD : BEH_MAMMAL);
   const behChips = () => chips("beh", behFor(o.type).map(b => b[0]), o.beh, { multi: true, own: true, limit: 10, search: true, labels: behFor(o.type).map(b => `${esc(b[0])} <small>(${esc(b[1])})</small>`) });
-  const REQ = [["sp", "Зүйл"], ["arga", "Юу хийсэн"], ["beh", "Зан төрх"], ["res", "Үр дүн"]];
+  const REQ = [["sp", "Зүйл"], ["arga", "Юу хийсэн"], ["n", "Тоо толгой"], ["beh", "Зан төрх"], ["res", "Үр дүн"]];
   const dt = new Date(o.t), uses = t => o.tools.includes(t) || o.acts.includes(t), gun = () => uses("Ангийн буу"), sig = () => uses("Дохионы буу");
   return {
     title: o._new ? "Шинэ ажиглалт" : (o.done ? "Ажиглалт" : "Ажиглалт бөглөх"), tab: "home",
@@ -441,7 +518,7 @@ Views.obs = async ({ id, inspId, draft }) => {
         <div class="field"><input type="search" id="q" placeholder="Нэрээр хайх… (жишээ нь «элээ»)" autocomplete="off"><div class="sugg" id="sugg" hidden></div></div>
         <div id="spquick"></div></div>
       <div class="card" data-req="arga"><p class="h">Юу хийсэн <span class="small">(олныг сонгож болно)</span></p>${chips("arga", ARGA, o.arga, { multi: true, own: true })}</div>
-      <div class="card"><p class="h">Тоо толгой</p><div class="counter"><button type="button" data-d="-1" aria-label="Хасах">−</button><input type="number" inputmode="numeric" id="n" value="${o.n}" min="1"><button type="button" data-d="1" aria-label="Нэмэх">+</button></div>
+      <div class="card" data-req="n"><p class="h">Тоо толгой</p><div class="counter"><button type="button" data-d="-1" aria-label="Хасах">−</button><input type="number" inputmode="numeric" id="n" value="${o.n || ""}" min="1" placeholder="?"><button type="button" data-d="1" aria-label="Нэмэх">+</button></div>
         <div class="presets">${[1, 2, 5, 10, 20, 50, 100].map(n => `<button type="button" data-n="${n}">${n}</button>`).join("")}</div></div>
       <div class="card" data-req="beh"><p class="h">Зан төрх <span class="small">(олныг сонгож болно)</span></p><div id="behbox">${behChips()}</div></div>
       <div class="card"><p class="h">Нислэгийн зам</p><div id="pathprev"></div>
@@ -460,7 +537,7 @@ Views.obs = async ({ id, inspId, draft }) => {
       <div class="formfoot"><button class="btn p xl" id="save">Хадгалах</button><button class="btn" id="later">Хадгалаад дараа бөглөх</button></div>`,
     async mount(m) {
       let dirty = false, tried = false;
-      const missing = () => REQ.filter(([k]) => !asList(o[k]).length);
+      const missing = () => REQ.filter(([k]) => k === "n" ? !(o.n > 0) : !asList(o[k]).length);
       const showMiss = () => {
         const x = missing();
         $$("[data-req]", m).forEach(c => c.classList.toggle("miss", tried && x.some(([k]) => k === c.dataset.req)));
@@ -496,8 +573,10 @@ Views.obs = async ({ id, inspId, draft }) => {
       bindChips(m, onPick);
       m.addEventListener("input", () => dirty = true);
       const n = $("#n", m);
-      $$(".counter button", m).forEach(x => x.onclick = () => { n.value = Math.max(1, (+n.value || 1) + +x.dataset.d); dirty = true; });
-      $$(".presets button", m).forEach(x => x.onclick = () => { n.value = x.dataset.n; dirty = true; });
+      const setN = () => { o.n = +n.value > 0 ? Math.round(+n.value) : null; dirty = true; showMiss(); };
+      n.addEventListener("input", setN);
+      $$(".counter button", m).forEach(x => x.onclick = () => { n.value = Math.max(1, (+n.value || 0) + +x.dataset.d); setN(); });
+      $$(".presets button", m).forEach(x => x.onclick = () => { n.value = x.dataset.n; setN(); });
       // Нислэгийн зам: бүтэн дэлгэцээр зурж, "Болсон" дарна
       const ins = o.inspId ? await DB.get("insps", o.inspId) : null, track = ins ? ins.track.map(p => [p[0], p[1]]) : [], me = o.lat ? [o.lat, o.lon] : null;
       let prev = null;
@@ -520,27 +599,30 @@ Views.obs = async ({ id, inspId, draft }) => {
       };
       drawPh();
       const collect = () => {
-        o.n = Math.max(1, +n.value || 1);
+        o.n = +n.value > 0 ? Math.round(+n.value) : null;
         o.ammoGun = gun() ? Math.max(0, +$("#ag", m).value || 0) : 0; o.ammoSig = sig() ? Math.max(0, +$("#as", m).value || 0) : 0;
         o.loc = $("#loc", m).value === "__own" ? "" : $("#loc", m).value; o.note = $("#note", m).value.trim();
         const [hh, mi] = ($("#tm", m).value || "0:0").split(":").map(Number), d = new Date($("#d", m).value + "T00:00"); if (!isNaN(d)) { d.setHours(hh, mi); o.t = d.getTime(); }
       };
       const save = async () => {
         collect(); const wasNew = o._new; delete o._new; delete o._prefilled;
-        await Store.saveObs(o); App.guard = null;
+        await Store.saveObs(o); App.guard = null; dirty = false; await DB.setMeta("obsDraft", null);
         toast(o.done ? "Хадгалагдлаа" : "Хадгалагдлаа · дараа нь бөглөнө"); return wasNew;
       };
-      $("#save", m).onclick = async () => {
+      $("#save", m).onclick = once(async () => {
         tried = true; showMiss();
         const x = missing();
         if (x.length) { toast("Дутуу: " + x.map(y => y[1]).join(", "), 3000); $(`[data-req="${x[0][0]}"]`, m).scrollIntoView({ behavior: "smooth", block: "center" }); return; }
         await save(); App.back();
-      };
-      $("#later", m).onclick = async () => { await save(); App.back(); };
+      });
+      $("#later", m).onclick = once(async () => { await save(); App.back(); });
       $("#del", m).addEventListener("click", async () => {
         if (!await confirmBox(o._new ? "Энэ ажиглалтыг хадгалахгүй болих уу?" : "Энэ ажиглалтыг устгах уу?", { ok: o._new ? "Болих" : "Устгах", cancel: "Үлдэх", danger: true })) return;
-        if (!o._new) await Store.delObs(o); App.guard = null; toast(o._new ? "Хадгалсангүй" : "Устгагдлаа"); App.back();
+        if (!o._new) await Store.delObs(o); App.guard = null; dirty = false; await DB.setMeta("obsDraft", null); toast(o._new ? "Хадгалсангүй" : "Устгагдлаа"); App.back();
       });
+      // Апп гэнэт хаагдвал алдагдахгүйн тулд 3 секунд тутам ноорог хадгална
+      const dt = setInterval(() => { if (dirty || (o._new && o.sp)) { collect(); DB.setMeta("obsDraft", structuredClone(o)).catch(() => {}); } }, 3000);
+      App.onCleanup(() => clearInterval(dt));
       // Хадгалахгүй гарвал мэдээлэл алдагдахгүйн тулд "Дутуу" гэж автоматаар хадгална
       App.guard = async () => {
         if (!dirty && !(o._new && o.sp)) return true;
@@ -567,9 +649,11 @@ Views.inspView = async ({ id }) => {
       <p class="sec">Явсан зам</p><div id="map"></div>
       <p class="sec">Ажиглалт (${obs.length})</p>
       <div class="list">${i.noBird ? `<div class="empty">Шувуу ажиглагдаагүй</div>` : obs.map(obsItem).join("")}</div>
-      <button class="btn soft" id="add">${ICON.plus} Энэ үзлэгт ажиглалт нэмэх</button>`,
+      <button class="btn soft" id="add">${ICON.plus} Энэ үзлэгт ажиглалт нэмэх</button>
+      <button type="button" class="btn sm ghost delinsp" id="delinsp">Үзлэг устгах</button>`,
     mount(m) {
       bindObsItems(m);
+      $("#delinsp", m).onclick = once(async () => { if (await askDelInsp(i, obs.length)) App.back(); });
       const pm = PathMap($("#map", m), { pts: [], track: i.track.map(p => [p[0], p[1]]), readonly: true }); App.onCleanup(() => pm.destroy());
       $("#add", m).onclick = () => App.go("obs", { inspId: i.id });
     }
@@ -680,7 +764,7 @@ Views.handover = async ({ kind } = {}) => {
         $("#addc", m).onclick = async () => { const b = await photoChoice(); if (b) { h.car.photos.push(await Store.putBlob(b, "Машины зураг")); drawCar(); } };
       };
       drawCar();
-      $("#done", m).onclick = async () => {
+      $("#done", m).onclick = once(async () => {
         h.car.km = $("#km", m).value; h.car.damage = $("#dmg", m).value.trim();
         const num = id => { const v = $(id, m).value; return v === "" ? null : +v; };
         h.sigAmmo = num("#sig"); h.gunAmmo = num("#gun");
@@ -712,7 +796,7 @@ Views.handover = async ({ kind } = {}) => {
         await Store.startShift({ staff: h.receiver.name, pos: h.receiver.pos, coworkers: rcv.coworkers, len: h.len, car: h.car.name, sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a, from: old.id });
         toast(`Ээлж хүлээлгэлээ. ${h.receiver.name}-ийн ээлж эхэллээ.`, 3500);
         App.go("home", {}, { reset: true });
-      };
+      });
     }
   };
 };
@@ -750,7 +834,7 @@ Views.takeover = async () => {
       let rp = null;
       $("#rsig", m).closest("details").addEventListener("toggle", e => { if (e.target.open && !rp) { rp = SigPad($("#rsig", m)); $("#rclr", m).onclick = () => rp.clear(); } });
       $("#all", m).onclick = () => $$("[data-ck]", m).forEach(x => x.checked = true);
-      $("#done", m).onclick = async () => {
+      $("#done", m).onclick = once(async () => {
         const left = $$("[data-ck]", m).filter(x => !x.checked).length, miss = [];
         if (left) miss.push(`${left} зүйл шалгаагүй`);
         if (!rcv.staff) miss.push("хүлээн авах ажилтан");
@@ -763,7 +847,7 @@ Views.takeover = async () => {
         await Store.takeOver(old, { name: rcv.staff, pos: rcv.pos, coworkers: rcv.coworkers, selfie: me.selfie, sign }, { items: items.length, note: $("#cnote", m).value.trim() });
         await Store.startShift({ staff: rcv.staff, pos: rcv.pos, coworkers: rcv.coworkers, len: st.len, car: h.car?.name || CARS[0], sigAmmo: a.sig, gunAmmo: a.gun, ammoIn: a, from: old.id });
         toast(`${rcv.staff}-ийн ээлж эхэллээ.`, 3500); App.go("home", {}, { reset: true });
-      };
+      });
     }
   };
 };
@@ -847,7 +931,7 @@ Views.ref = async () => {
         <div class="field"><span class="label">Имэйл хүлээн авагчид (таслалаар)</span><input type="email" id="to" multiple value="${esc(S.to)}" placeholder="name@example.com, …"></div>
         <label class="check"><span>Ээлж хүлээлцсэний дараа ZIP-ийг автоматаар имэйлдэх</span><input type="checkbox" class="toggle" id="auto" ${S.autoMail ? "checked" : ""}></label>
         <div class="row"><button class="btn p" id="saveS">Хадгалах</button><button class="btn" id="test">Шалгах</button></div>
-        <div class="banner ${n ? "warn" : "ok"}"><b>${n}</b><span class="grow">илгээгдээгүй зүйл${Sync.lastError ? ` · Алдаа: ${esc(Sync.lastError)}` : ""}</span><button class="btn sm" id="now">Одоо илгээх</button></div></div>
+        <div class="banner ${n ? "warn" : "ok"}"><b>${n}</b><span class="grow">илгээгдээгүй зүйл${Sync.lastError ? ` · Алдаа: ${esc(Sync.lastError)}` : ""}</span><button class="btn sm" id="now">Одоо илгээх</button></div>${await outboxIssues()}</div>
       <div class="card"><p class="h">Харагдах байдал</p>${chips("theme", ["auto", "light", "dark"], S.theme || "auto", { fill: true, labels: ["Автомат", "Өдөр", "Шөнө"] })}</div>
       <div class="card"><p class="h">Офлайн газрын зураг</p><div class="small">Хиймэл дагуулын зургийг интернэттэй үед нэг удаа татаж авбал офлайн ажиллана (~20 МБ).</div><button class="btn" id="tiles">Газрын зураг татах</button><div class="small" id="tprog"></div></div>
       <div class="card"><p class="h">Нөөц хуулбар</p><div class="small">Бүх өгөгдөл, зургийг нэг ZIP файлд татна.</div><button class="btn" id="bak">Бүх өгөгдлийг татах</button></div>
@@ -875,6 +959,12 @@ Views.ref = async () => {
     }
   };
 };
+async function outboxIssues() {
+  const box = await DB.all("outbox"), bad = box.filter(x => x.tries), mails = box.filter(x => x.op === "mail").length;
+  const name = x => ({ file: "Зураг", track: "GPS зам", path: "Нислэгийн зам", shiftpath: "Ээлжийн нислэгийн зам", upsert: "Мөр", delete: "Устгал", mail: "Имэйл" }[x.op] || x.op) + (x.table ? ` (${SHEET_NAMES[x.table] || x.table})` : "");
+  return (mails && !Store.settings.to.trim() ? `<div class="banner warn"><b>${mails}</b><span class="grow">имэйл хүлээгдэж байна. Хүлээн авагчийн имэйл оруулбал илгээгдэнэ.</span></div>` : "")
+    + (bad.length ? `<div class="small"><b>Алдаатай (${bad.length}):</b><br>${bad.slice(0, 8).map(x => `${esc(name(x))}: ${esc(x.err || "")} · ${x.tries} оролдлого`).join("<br>")}</div>` : "");
+}
 Views.species = async () => ({
   title: "Тохиолдох зүйлс", tab: "ref",
   html: `<div class="small">Чингис хаан ОУНБ-д тохиолдох зүйлийн жагсаалт (BRCC, 2025). Зүйл дээр дарж эрсдэл, үргээх аргыг харна.</div>
@@ -911,8 +1001,27 @@ async function downloadTiles(out) {
 
 /* ---------- Эхлүүлэх ---------- */
 function applyTheme() { const t = Store.settings.theme; if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+/* Хадгалах үед алдаа гарвал (утасны зай дүүрсэн г.м) чимээгүй өнгөрөхгүй */
+let StorageWarn = "";
+addEventListener("unhandledrejection", e => {
+  const err = e.reason || {}, full = err.name === "QuotaExceededError" || /quota|space/i.test(err.message || "");
+  toast(full ? "⚠ Хадгалж чадсангүй: утасны зай дүүрсэн. Зай гаргаад дахин оролдоно уу." : "⚠ Алдаа гарлаа: " + (err.message || err), 7000);
+});
+async function checkStorage() {
+  try { const { usage, quota } = await navigator.storage.estimate(); StorageWarn = quota && usage / quota > .8 ? `Утасны санах ой ${Math.round(usage / quota * 100)}% дүүрсэн байна.` : ""; } catch (e) { }
+}
+/* Апп гэнэт хаагдсан бол бөглөж байсан ажиглалтыг сэргээнэ */
+async function restoreDraft() {
+  const d = await DB.meta("obsDraft", null); if (!d) return;
+  await DB.setMeta("obsDraft", null);
+  if (d._new && !d.sp) return;
+  delete d._new; delete d._prefilled; await Store.saveObs(d);
+  toast("Хадгалаагүй үлдсэн ажиглалтыг сэргээлээ", 3500);
+}
 async function boot() {
   await Store.load(); applyTheme();
+  await restoreDraft().catch(() => {});
+  Store.cleanBlobs().then(checkStorage).catch(() => {});
   $(".top .back").onclick = () => App.back();
   $(".sync").onclick = () => App.go("ref", {}, { reset: true });
   $$(".nav button").forEach(b => b.onclick = () => App.go(b.dataset.tab, {}, { reset: true }));

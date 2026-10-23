@@ -1,7 +1,7 @@
 // Nubia Bird: тогтмол жагсаалтууд. Эх сурвалж: шувууны үзлэгийн дэвтэр, MJ-ийн Excel жагсаалт, BRCC файлууд, хөтөлбөр.
 "use strict";
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 // birddata.nubia@gmail.com-ийн Apps Script вэб апп. Нууц түлхүүрийг энд бичихгүй, утас бүрт Тохиргоонд оруулна.
 const SHEET_URL = "https://script.google.com/macros/s/AKfycbxdUESMDc0I8AC_D8r0egE-XUPz2RUOP-ZkqM3CppLDU8EluvzUH5VUYW86Z_4j5B2P/exec";
 
